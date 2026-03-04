@@ -61,6 +61,24 @@ export interface Device {
   channelCount: number;
 }
 
+export interface DanteDevice {
+  host: string;
+  name: string;
+  addresses: string[];
+  port: number;
+  protocolFamily: 'dante' | 'ravenna' | 'aes67' | 'unknown';
+  manufacturer: string;
+  model: string | null;
+  sampleRate: number;
+  txChannels: number | null;
+  rxChannels: number | null;
+  isDante: boolean;
+  isAES67: boolean;
+  isRAVENNA: boolean;
+  software: string | null;
+  requiresAES67: boolean;
+}
+
 export interface PtpStatus {
   lockStatus: 'locked' | 'degraded' | 'unlocked' | 'unknown';
   driftPpm: number;
@@ -148,6 +166,7 @@ export interface ElectronAPI {
   onSdpError: (callback: (error: string) => void) => () => void;
   onSdpStatus: (callback: (data: { status: string; port: number }) => void) => () => void;
   onPtpStatus: (callback: (data: { streamId: string; status: PtpStatus | null }) => void) => () => void;
+  onDanteDevices: (callback: (devices: DanteDevice[]) => void) => () => void;
 }
 
 export interface PortConflictData {

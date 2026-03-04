@@ -20,6 +20,7 @@ let ptpProcess;
 // Stream storage for merging SAP and Dante
 let sapStreams = [];
 let danteStreams = [];
+let danteDevices = [];
 
 // Persistent data
 let persistentData = store.get('persistentData', {
@@ -248,6 +249,9 @@ function initChildProcesses() {
     if (data.type === 'dante-streams') {
       danteStreams = data.streams;
       sendMergedStreams();
+    } else if (data.type === 'dante-devices') {
+      danteDevices = data.devices;
+      sendToRenderer('dante-devices', danteDevices);
     } else if (data.type === 'status') {
       console.log('[Dante]', data.status);
     } else if (data.type === 'error') {

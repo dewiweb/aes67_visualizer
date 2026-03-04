@@ -158,15 +158,36 @@ function deviceToStream(device) {
  */
 function sendUpdate() {
   const streams = [];
+  const danteDevices = [];
   
   for (const [hostname, device] of devices) {
     const stream = deviceToStream(device);
     if (stream) {
       streams.push(stream);
+    } else {
+      // Device detected but no routable stream (pure Dante without AES67)
+      danteDevices.push({
+        host: device.host,
+        name: device.name,
+        addresses: device.addresses,
+        port: device.port,
+        protocolFamily: device.protocolFamily || 'dante',
+        manufacturer: device.manufacturer || 'Audinate',
+        model: device.model || null,
+        sampleRate: device.sampleRate || 48000,
+        txChannels: device.txChannels || null,
+        rxChannels: device.rxChannels || null,
+        isDante: device.isDante !== false,
+        isAES67: device.isAES67 || false,
+        isRAVENNA: device.isRAVENNA || false,
+        software: device.software || null,
+        requiresAES67: !device.isAES67 && (device.protocolFamily === 'dante'),
+      });
     }
   }
 
   process.send({ type: 'dante-streams', streams });
+  process.send({ type: 'dante-devices', devices: danteDevices });
 }
 
 /**

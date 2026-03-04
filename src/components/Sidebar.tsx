@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Plus, Radio, FileText, Server, Download } from 'lucide-react';
-import { Stream, StreamLevels, StreamPtpStatuses } from '../types';
+import { Stream, StreamLevels, StreamPtpStatuses, DanteDevice } from '../types';
 import StreamCard from './StreamCard';
 import DevicePanel from './DevicePanel';
 
@@ -11,6 +11,7 @@ interface SidebarProps {
   streams: Stream[];
   streamLevels: StreamLevels;
   streamPtpStatuses: StreamPtpStatuses;
+  danteDevices: DanteDevice[];
   playingStreamId: string | null;
   onAddManualStream: (sdp: string) => void;
   onRemoveStream: (streamId: string) => void;
@@ -23,6 +24,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   streams,
   streamLevels,
   streamPtpStatuses,
+  danteDevices,
   playingStreamId,
   onAddManualStream,
   onRemoveStream,
@@ -42,8 +44,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   const sapStreams = streams.filter((s) => s.sourceType === 'sap' || s.sourceType === 'dante' || s.sourceType === 'ravenna');
   const manualStreams = streams.filter((s) => s.sourceType === 'manual');
 
-  // Count unique devices
-  const deviceCount = new Set(streams.map(s => s.deviceIp || s.sapSourceIp || 'unknown')).size;
+  // Count unique devices (SAP-based + pure Dante mDNS)
+  const sapDeviceCount = new Set(streams.map(s => s.deviceIp || s.sapSourceIp || 'unknown')).size;
+  const deviceCount = sapDeviceCount + danteDevices.length;
 
   return (
     <aside className="w-80 bg-slate-800 border-r border-slate-700 flex flex-col shrink-0 overflow-hidden">
@@ -127,6 +130,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         {activeTab === 'devices' && (
           <DevicePanel
             streams={streams}
+            danteDevices={danteDevices}
             t={t}
             onStreamClick={(stream) => onPlayStream(stream, 0, Math.min(1, stream.channels - 1))}
           />

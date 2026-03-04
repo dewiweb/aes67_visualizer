@@ -13,6 +13,7 @@ import {
   Stream,
   StreamLevels,
   StreamPtpStatuses,
+  DanteDevice,
   MonitorSlot,
   NetworkInterface,
   Settings,
@@ -36,6 +37,7 @@ const App: React.FC = () => {
   const [streams, setStreams] = useState<Stream[]>([]);
   const [streamLevels, setStreamLevels] = useState<StreamLevels>({});
   const [streamPtpStatuses, setStreamPtpStatuses] = useState<StreamPtpStatuses>({});
+  const [danteDevices, setDanteDevices] = useState<DanteDevice[]>([]);
 
   // Monitor slots
   const [slots, setSlots] = useState<MonitorSlot[]>(
@@ -127,6 +129,11 @@ const App: React.FC = () => {
       setPortConflict(null);
     });
 
+    // Subscribe to Dante device list
+    const unsubDanteDevices = window.api.onDanteDevices((devices) => {
+      setDanteDevices(devices);
+    });
+
     // Subscribe to PTP status updates
     const unsubPtpStatus = window.api.onPtpStatus(({ streamId, status }) => {
       setStreamPtpStatuses((prev) => {
@@ -147,6 +154,7 @@ const App: React.FC = () => {
       unsubPortConflict();
       unsubSdpStatus();
       unsubPtpStatus();
+      unsubDanteDevices();
     };
   }, []);
 
@@ -400,6 +408,7 @@ const App: React.FC = () => {
             streams={filteredStreams}
             streamLevels={streamLevels}
             streamPtpStatuses={streamPtpStatuses}
+            danteDevices={danteDevices}
             playingStreamId={playingStreamId}
             onAddManualStream={handleAddManualStream}
             onRemoveStream={handleRemoveStream}

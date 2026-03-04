@@ -1,9 +1,10 @@
 import React, { useMemo } from 'react';
-import { Stream, Device } from '../types';
-import { Server, Radio, Clock, Layers, ChevronDown, ChevronRight } from 'lucide-react';
+import { Stream, Device, DanteDevice } from '../types';
+import { Server, Radio, Clock, Layers, ChevronDown, ChevronRight, AlertCircle } from 'lucide-react';
 
 interface DevicePanelProps {
   streams: Stream[];
+  danteDevices: DanteDevice[];
   t: Record<string, string>;
   onStreamClick?: (stream: Stream) => void;
 }
@@ -47,7 +48,7 @@ function aggregateDevices(streams: Stream[]): Device[] {
   return Array.from(deviceMap.values()).sort((a, b) => a.ip.localeCompare(b.ip));
 }
 
-const DevicePanel: React.FC<DevicePanelProps> = ({ streams, t, onStreamClick }) => {
+const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onStreamClick }) => {
   const [expandedDevices, setExpandedDevices] = React.useState<Set<string>>(new Set());
 
   const devices = useMemo(() => aggregateDevices(streams), [streams]);
@@ -64,7 +65,7 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, t, onStreamClick }) 
     });
   };
 
-  if (devices.length === 0) {
+  if (devices.length === 0 && danteDevices.length === 0) {
     return (
       <div className="p-4 text-slate-500 text-sm text-center">
         {t.noDevices || 'No devices detected'}
@@ -74,6 +75,52 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, t, onStreamClick }) 
 
   return (
     <div className="space-y-2 p-2">
+
+      {/* Pure Dante mDNS devices (no AES67 stream) */}
+      {danteDevices.map((dd) => (
+        <div
+          key={dd.host}
+          className="bg-slate-800 rounded-lg overflow-hidden border border-purple-900/40"
+        >
+          <div className="flex items-center gap-3 p-3">
+            <Server size={18} className="text-purple-400 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-medium text-sm text-white truncate">{dd.name}</span>
+                <span className="text-[10px] bg-purple-900/50 text-purple-300 px-1.5 py-0.5 rounded">Dante</span>
+                {dd.isAES67 && (
+                  <span className="text-[10px] bg-blue-900/50 text-blue-300 px-1.5 py-0.5 rounded">AES67</span>
+                )}
+              </div>
+              <div className="flex items-center gap-3 text-xs text-slate-400 mt-0.5">
+                {dd.addresses.length > 0 && (
+                  <span className="font-mono">{dd.addresses.find(a => a.includes('.')) || dd.host}</span>
+                )}
+                {!dd.addresses.length && (
+                  <span className="font-mono text-slate-500">{dd.host}</span>
+                )}
+                {dd.txChannels && (
+                  <span className="flex items-center gap-1">
+                    <Layers size={10} />
+                    {dd.txChannels}ch TX
+                  </span>
+                )}
+                {dd.sampleRate && (
+                  <span>{dd.sampleRate / 1000}kHz</span>
+                )}
+              </div>
+              {dd.requiresAES67 && (
+                <div className="flex items-center gap-1 mt-1 text-[10px] text-yellow-500">
+                  <AlertCircle size={10} />
+                  <span>Enable AES67 on device to stream</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {/* SAP-based devices */}
       {devices.map((device) => {
         const isExpanded = expandedDevices.has(device.ip);
         

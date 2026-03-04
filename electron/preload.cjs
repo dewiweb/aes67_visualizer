@@ -66,4 +66,10 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('ptp-status', (_, data) => callback(data));
     return () => ipcRenderer.removeAllListeners('ptp-status');
   },
+
+  // Dante device list (pure Dante without AES67)
+  onDanteDevices: (callback) => {
+    ipcRenderer.on('dante-devices', (_, data) => callback(data));
+    return () => ipcRenderer.removeAllListeners('dante-devices');
+  },
 });
