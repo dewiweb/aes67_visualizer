@@ -109,7 +109,6 @@ function parseSdp(sdp) {
       sdp.ptpVersion = tsRefclkMatch[1];
       sdp.ptpGrandmaster = tsRefclkMatch[2];
       sdp.ptpDomain = tsRefclkMatch[3] || '0';
-      console.log(`[SDP] PTP found: ${sdp.ptpVersion} GM=${sdp.ptpGrandmaster} Domain=${sdp.ptpDomain}`);
     } else {
       // Check for other clock reference formats
       const clockMatch = sdp.raw.match(/a=ts-refclk:(.+)/i);
@@ -194,6 +193,8 @@ function handleSapMessage(message, rinfo) {
   // Don't overwrite manual streams
   if (sessions[id]?.manual) return;
 
+  const isNew = !sessions[id];
+
   // Store session
   sdp.raw = rawSdp;
   sdp.id = id;
@@ -203,6 +204,15 @@ function handleSapMessage(message, rinfo) {
   sdp.sapSourceIp = rinfo?.address || null; // IP that sent the SAP packet
 
   sessions[id] = parseSdp(sdp);
+
+  if (isNew) {
+    const s = sessions[id];
+    console.log(`[SDP] New stream: ${s.name || id} (${s.mcast}:${s.port})`);
+    if (s.ptpGrandmaster) {
+      console.log(`[SDP] PTP: ${s.ptpVersion} GM=${s.ptpGrandmaster} Domain=${s.ptpDomain}`);
+    }
+  }
+
   sendUpdate();
 }
 
