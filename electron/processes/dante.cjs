@@ -7,22 +7,27 @@
 const Bonjour = require('bonjour-service').default;
 const crypto = require('crypto');
 
-// Dante mDNS service types
+// Dante mDNS service types — type/protocol separated (bonjour-service adds _ prefix itself)
 const DANTE_SERVICES = [
-  '_netaudio-arc._udp',  // Audio Routing Control
-  '_netaudio-cmc._udp',  // Clocking/Management Control
-  '_netaudio-dbc._udp',  // Device Browser Control
+  { type: 'netaudio-arc', protocol: 'udp' },  // Audio Routing Control
+  { type: 'netaudio-cmc', protocol: 'udp' },  // Clocking/Management Control
+  { type: 'netaudio-dbc', protocol: 'udp' },  // Device Browser Control
 ];
 
 // RAVENNA / AES67 mDNS service types
 const RAVENNA_SERVICES = [
-  '_ravenna._tcp',       // RAVENNA device discovery
-  '_ravenna-session._tcp', // RAVENNA session announcement
+  { type: 'ravenna',          protocol: 'tcp' },  // RAVENNA device discovery
+  { type: 'ravenna-session',  protocol: 'tcp' },  // RAVENNA session announcement
 ];
 
 const AES67_SERVICES = [
-  '_aes67._udp',         // AES67 device discovery
+  { type: 'aes67', protocol: 'udp' },  // AES67 device discovery
 ];
+
+// For family detection, service.type returned by bonjour-service is the name without _ or protocol
+const DANTE_TYPE_NAMES  = DANTE_SERVICES.map(s => s.type);
+const RAVENNA_TYPE_NAMES = RAVENNA_SERVICES.map(s => s.type);
+const AES67_TYPE_NAMES  = AES67_SERVICES.map(s => s.type);
 
 let bonjour = null;
 let browsers = [];
@@ -39,12 +44,12 @@ function generateStreamId(device, channelInfo) {
 }
 
 /**
- * Detect protocol family from service type
+ * Detect protocol family from service type name (as returned by bonjour-service, no underscores)
  */
 function getProtocolFamily(serviceType) {
-  if (DANTE_SERVICES.includes(serviceType)) return 'dante';
-  if (RAVENNA_SERVICES.includes(serviceType)) return 'ravenna';
-  if (AES67_SERVICES.includes(serviceType)) return 'aes67';
+  if (DANTE_TYPE_NAMES.includes(serviceType))   return 'dante';
+  if (RAVENNA_TYPE_NAMES.includes(serviceType)) return 'ravenna';
+  if (AES67_TYPE_NAMES.includes(serviceType))   return 'aes67';
   return 'unknown';
 }
 
@@ -220,10 +225,10 @@ function init() {
     
     const allServices = [...DANTE_SERVICES, ...RAVENNA_SERVICES, ...AES67_SERVICES];
 
-    for (const serviceType of allServices) {
-      const browser = bonjour.find({ type: serviceType }, onServiceUp);
+    for (const svc of allServices) {
+      const browser = bonjour.find({ type: svc.type, protocol: svc.protocol }, onServiceUp);
       browsers.push(browser);
-      console.log(`[Discovery] Browsing for ${serviceType}`);
+      console.log(`[Discovery] Browsing for _${svc.type}._${svc.protocol}`);
     }
 
     process.send({ type: 'status', status: 'browsing' });
