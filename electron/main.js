@@ -1,0 +1,400 @@
+import { app, BrowserWindow, ipcMain, Menu } from 'electron';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { fork, exec } from 'child_process';
+import Store from 'electron-store';
+import os from 'os';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const store = new Store();
+
+let mainWindow;
+let sdpProcess;
+let danteProcess;
+let audioProcess;
+let metersProcess;
+
+// Stream storage for merging SAP and Dante
+let sapStreams = [];
+let danteStreams = [];
+
+// Persistent data
+let persistentData = store.get('persistentData', {
+  settings: {
+    bufferSize: 16,
+    bufferEnabled: true,
+    hideUnsupported: true,
+    sdpDeleteTimeout: 300,
+    language: 'en',
+  },
+});
+
+let currentNetworkInterface = store.get('interface');
+let currentAudioDevice = store.get('audioInterface');
+
+/**
+ * Find which process is using a specific UDP port
+ */
+async function findProcessUsingPort(port) {
+  return new Promise((resolve) => {
+    const isWindows = process.platform === 'win32';
+    const command = isWindows
+      ? `netstat -ano | findstr ":${port}"`
+      : `lsof -i UDP:${port} -t`;
+
+    exec(command, (error, stdout) => {
+      if (error || !stdout.trim()) {
+        resolve(null);
+        return;
+      }
+
+      try {
+        if (isWindows) {
+          // Parse Windows netstat output: Proto Local Address Foreign Address State PID
+          const lines = stdout.trim().split('\n');
+          for (const line of lines) {
+            const parts = line.trim().split(/\s+/);
+            if (parts.length >= 5) {
+              const pid = parts[parts.length - 1];
+              if (pid && !isNaN(parseInt(pid))) {
+                // Get process name from PID
+                exec(`tasklist /FI "PID eq ${pid}" /FO CSV /NH`, (err, taskOutput) => {
+                  if (err || !taskOutput.trim()) {
+                    resolve({ pid, name: 'Unknown' });
+                    return;
+                  }
+                  // Parse CSV: "name.exe","PID","Session Name","Session#","Mem Usage"
+                  const match = taskOutput.match(/"([^"]+)"/);
+                  const name = match ? match[1] : 'Unknown';
+                  resolve({ pid: parseInt(pid), name });
+                });
+                return;
+              }
+            }
+          }
+        } else {
+          // Unix: lsof returns PID directly
+          const pid = parseInt(stdout.trim().split('\n')[0]);
+          exec(`ps -p ${pid} -o comm=`, (err, psOutput) => {
+            const name = err ? 'Unknown' : psOutput.trim();
+            resolve({ pid, name });
+          });
+          return;
+        }
+      } catch (e) {
+        console.error('[findProcessUsingPort]', e);
+      }
+      resolve(null);
+    });
+  });
+}
+
+function getNetworkInterfaces() {
+  const interfaces = os.networkInterfaces();
+  const result = [];
+  
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        result.push({
+          name,
+          address: iface.address,
+          isCurrent: currentNetworkInterface?.address === iface.address,
+        });
+      }
+    }
+  }
+  
+  return result;
+}
+
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1600,
+    height: 900,
+    minWidth: 1200,
+    minHeight: 700,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false,
+    },
+    backgroundColor: '#0f172a',
+    autoHideMenuBar: true,
+  });
+
+  const isDev = !app.isPackaged;
+  const startUrl = isDev 
+    ? 'http://localhost:5173' 
+    : `file://${path.join(__dirname, '../dist/index.html')}`;
+
+  mainWindow.loadURL(startUrl);
+
+  if (isDev) {
+    mainWindow.webContents.openDevTools();
+  }
+}
+
+function sendToRenderer(channel, data) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, data);
+  }
+}
+
+/**
+ * Merge SAP and Dante streams and send to renderer
+ */
+function sendMergedStreams() {
+  // Combine streams, avoiding duplicates (by multicast address for AES67-enabled Dante)
+  const mergedMap = new Map();
+  
+  // Add SAP streams first
+  for (const stream of sapStreams) {
+    mergedMap.set(stream.id, stream);
+  }
+  
+  // Add Dante streams (may override if same device has AES67 enabled)
+  for (const stream of danteStreams) {
+    // Check if there's already an AES67 stream from this device
+    const existingStream = Array.from(mergedMap.values()).find(
+      s => s.mcast === stream.mcast || s.name === stream.name
+    );
+    
+    if (!existingStream) {
+      mergedMap.set(stream.id, stream);
+    } else if (stream.danteDevice && !existingStream.danteDevice) {
+      // Enhance existing stream with Dante device info
+      existingStream.danteDevice = stream.danteDevice;
+      existingStream.dante = true;
+    }
+  }
+  
+  const allStreams = Array.from(mergedMap.values());
+  sendToRenderer('streams-update', allStreams);
+}
+
+function initChildProcesses() {
+  // SDP/SAP Discovery Process
+  sdpProcess = fork(path.join(__dirname, 'processes/sdp.cjs'));
+  
+  sdpProcess.on('message', async (data) => {
+    if (data.type === 'streams') {
+      sapStreams = data.streams;
+      sendMergedStreams();
+    } else if (data.type === 'port-conflict') {
+      console.error('[SDP Port Conflict]', data.message);
+      // Try to find which process is using the port
+      const blockingProcess = await findProcessUsingPort(data.port);
+      sendToRenderer('port-conflict', {
+        port: data.port,
+        message: data.message,
+        blockingProcess
+      });
+    } else if (data.type === 'status') {
+      sendToRenderer('sdp-status', data);
+    } else if (data.type === 'error') {
+      console.error('[SDP Error]', data.message);
+      sendToRenderer('sdp-error', data.message);
+    }
+  });
+
+  // Audio Playback Process
+  audioProcess = fork(path.join(__dirname, 'processes/audio.cjs'));
+  
+  audioProcess.on('message', (data) => {
+    if (data.type === 'status') {
+      sendToRenderer('audio-status', data);
+    } else if (data.type === 'error') {
+      sendToRenderer('audio-error', data.message);
+    }
+  });
+
+  // Meters Process (level monitoring)
+  metersProcess = fork(path.join(__dirname, 'processes/meters.cjs'));
+  
+  metersProcess.on('message', async (data) => {
+    if (data.type === 'levels') {
+      sendToRenderer('audio-levels', data.levels);
+    } else if (data.type === 'port-conflict') {
+      console.error('[Meters Port Conflict]', data.message);
+      const blockingProcess = await findProcessUsingPort(data.port);
+      sendToRenderer('port-conflict', {
+        port: data.port,
+        message: data.message,
+        blockingProcess,
+        source: 'meters',
+        stream: data.stream
+      });
+    }
+  });
+
+  // Dante Discovery Process (mDNS/DNS-SD)
+  danteProcess = fork(path.join(__dirname, 'processes/dante.cjs'));
+  
+  danteProcess.on('message', (data) => {
+    if (data.type === 'dante-streams') {
+      danteStreams = data.streams;
+      sendMergedStreams();
+    } else if (data.type === 'status') {
+      console.log('[Dante]', data.status);
+    } else if (data.type === 'error') {
+      console.error('[Dante Error]', data.message);
+    }
+  });
+}
+
+function setupIpcHandlers() {
+  // Get initial data
+  ipcMain.handle('get-initial-data', () => {
+    return {
+      interfaces: getNetworkInterfaces(),
+      persistentData,
+      currentInterface: currentNetworkInterface,
+    };
+  });
+
+  // Network interface management
+  ipcMain.handle('get-interfaces', () => getNetworkInterfaces());
+  
+  ipcMain.on('set-interface', (event, address) => {
+    const interfaces = getNetworkInterfaces();
+    const iface = interfaces.find(i => i.address === address);
+    
+    if (iface) {
+      currentNetworkInterface = iface;
+      store.set('interface', iface);
+      
+      // Notify child processes
+      if (sdpProcess) {
+        sdpProcess.send({ type: 'set-interface', address });
+      }
+      if (metersProcess) {
+        metersProcess.send({ type: 'set-interface', address });
+      }
+      
+      sendToRenderer('interface-changed', iface);
+    }
+  });
+
+  // Stream monitoring (meters)
+  ipcMain.on('start-monitoring', (event, stream) => {
+    if (metersProcess) {
+      metersProcess.send({ type: 'start', stream });
+    }
+  });
+
+  ipcMain.on('stop-monitoring', (event, streamId) => {
+    if (metersProcess) {
+      metersProcess.send({ type: 'stop', streamId });
+    }
+  });
+
+  // Audio playback
+  ipcMain.on('play-stream', (event, data) => {
+    if (audioProcess) {
+      audioProcess.send({ 
+        type: 'play', 
+        ...data,
+        audioDevice: currentAudioDevice,
+        networkInterface: currentNetworkInterface?.address,
+      });
+    }
+  });
+
+  ipcMain.on('stop-playback', () => {
+    if (audioProcess) {
+      audioProcess.send({ type: 'stop' });
+    }
+  });
+
+  // Manual SDP stream
+  ipcMain.on('add-manual-stream', (event, sdpText) => {
+    if (sdpProcess) {
+      sdpProcess.send({ type: 'add-manual', sdp: sdpText });
+    }
+  });
+
+  ipcMain.on('remove-stream', (event, streamId) => {
+    if (sdpProcess) {
+      sdpProcess.send({ type: 'remove', streamId });
+    }
+  });
+
+  // Settings
+  ipcMain.on('save-settings', (event, settings) => {
+    persistentData.settings = { ...persistentData.settings, ...settings };
+    store.set('persistentData', persistentData);
+    
+    if (sdpProcess && settings.sdpDeleteTimeout !== undefined) {
+      sdpProcess.send({ type: 'set-timeout', timeout: settings.sdpDeleteTimeout });
+    }
+  });
+
+  // Audio device
+  ipcMain.handle('get-audio-devices', async () => {
+    return new Promise((resolve) => {
+      if (audioProcess) {
+        const handler = (data) => {
+          if (data.type === 'devices') {
+            audioProcess.off('message', handler);
+            resolve(data.devices);
+          }
+        };
+        audioProcess.on('message', handler);
+        audioProcess.send({ type: 'get-devices' });
+      } else {
+        resolve([]);
+      }
+    });
+  });
+
+  ipcMain.on('set-audio-device', (event, device) => {
+    currentAudioDevice = device;
+    store.set('audioInterface', device);
+  });
+}
+
+app.whenReady().then(() => {
+  Menu.setApplicationMenu(null);
+  createWindow();
+  initChildProcesses();
+  setupIpcHandlers();
+
+  // Initialize SDP and Meters processes with current interface
+  if (currentNetworkInterface) {
+    if (sdpProcess) {
+      sdpProcess.send({ type: 'init', address: currentNetworkInterface.address });
+    }
+    if (metersProcess) {
+      metersProcess.send({ type: 'set-interface', address: currentNetworkInterface.address });
+    }
+  }
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+    }
+  });
+});
+
+app.on('window-all-closed', () => {
+  // Cleanup child processes
+  if (sdpProcess) sdpProcess.kill();
+  if (danteProcess) danteProcess.kill();
+  if (audioProcess) audioProcess.kill();
+  if (metersProcess) metersProcess.kill();
+
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
+});
+
+app.on('before-quit', () => {
+  if (sdpProcess) sdpProcess.kill();
+  if (danteProcess) danteProcess.kill();
+  if (audioProcess) audioProcess.kill();
+  if (metersProcess) metersProcess.kill();
+});
