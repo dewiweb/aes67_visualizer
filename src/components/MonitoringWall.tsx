@@ -1,24 +1,33 @@
 import React from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { X, Radio } from 'lucide-react';
-import { MonitorSlot, StreamLevels, ChannelLevel } from '../types';
+import { MonitorSlot, StreamLevels, StreamPtpStatuses, ChannelLevel, PtpStatus } from '../types';
 import LevelMeter from './LevelMeter';
 
 interface MonitoringWallProps {
   t: Record<string, string>;
   slots: MonitorSlot[];
   streamLevels: StreamLevels;
+  streamPtpStatuses: StreamPtpStatuses;
   onRemoveFromSlot: (slotId: string) => void;
 }
 
 interface SlotProps {
   slot: MonitorSlot;
   levels?: ChannelLevel[];
+  ptpStatus?: PtpStatus | null;
   t: Record<string, string>;
   onRemove: () => void;
 }
 
-const MonitorSlotComponent: React.FC<SlotProps> = ({ slot, levels, t, onRemove }) => {
+const PTP_DOT_CLS: Record<string, string> = {
+  locked:   'bg-green-400',
+  degraded: 'bg-yellow-400 animate-pulse',
+  unlocked: 'bg-red-400 animate-pulse',
+  unknown:  'bg-slate-500',
+};
+
+const MonitorSlotComponent: React.FC<SlotProps> = ({ slot, levels, ptpStatus, t, onRemove }) => {
   const { isOver, setNodeRef } = useDroppable({
     id: slot.id,
   });
@@ -44,6 +53,12 @@ const MonitorSlotComponent: React.FC<SlotProps> = ({ slot, levels, t, onRemove }
             <div className="flex items-center gap-2 min-w-0">
               <Radio size={14} className="text-blue-400 shrink-0" />
               <span className="font-medium text-sm truncate">{slot.stream.name}</span>
+              {ptpStatus && (
+                <span
+                  className={`w-2 h-2 rounded-full shrink-0 ${PTP_DOT_CLS[ptpStatus.lockStatus] || PTP_DOT_CLS.unknown}`}
+                  title={`PTP: ${ptpStatus.lockStatus} — ${ptpStatus.driftPpm} ppm`}
+                />
+              )}
             </div>
             <button
               onClick={onRemove}
@@ -117,6 +132,7 @@ const MonitoringWall: React.FC<MonitoringWallProps> = ({
   t,
   slots,
   streamLevels,
+  streamPtpStatuses,
   onRemoveFromSlot,
 }) => {
   return (
@@ -131,6 +147,7 @@ const MonitoringWall: React.FC<MonitoringWallProps> = ({
             key={slot.id}
             slot={slot}
             levels={slot.stream ? streamLevels[slot.stream.id] : undefined}
+            ptpStatus={slot.stream ? streamPtpStatuses[slot.stream.id] : undefined}
             t={t}
             onRemove={() => onRemoveFromSlot(slot.id)}
           />

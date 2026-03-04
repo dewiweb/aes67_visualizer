@@ -60,4 +60,10 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('sdp-status', (_, data) => callback(data));
     return () => ipcRenderer.removeAllListeners('sdp-status');
   },
+
+  // PTP monitoring
+  onPtpStatus: (callback) => {
+    ipcRenderer.on('ptp-status', (_, data) => callback(data));
+    return () => ipcRenderer.removeAllListeners('ptp-status');
+  },
 });

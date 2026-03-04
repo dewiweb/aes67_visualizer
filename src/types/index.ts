@@ -9,7 +9,7 @@ export interface Stream {
   ptime: number;
   isSupported: boolean;
   unsupportedReason?: string;
-  sourceType: 'sap' | 'manual' | 'dante';
+  sourceType: 'sap' | 'manual' | 'dante' | 'ravenna';
   manual: boolean;
   dante?: boolean;
   danteDevice?: {
@@ -17,6 +17,7 @@ export interface Stream {
     model: string | null;
     manufacturer: string;
     isAES67: boolean;
+    isRAVENNA?: boolean;
     software: string | null;
   };
   requiresSubscription?: boolean;
@@ -58,6 +59,18 @@ export interface Device {
   tool?: string;
   streamCount: number;
   channelCount: number;
+}
+
+export interface PtpStatus {
+  lockStatus: 'locked' | 'degraded' | 'unlocked' | 'unknown';
+  driftPpm: number;
+  ssrc: number;
+  lastSrTime: string | null;
+  sampleCount: number;
+}
+
+export interface StreamPtpStatuses {
+  [streamId: string]: PtpStatus | null;
 }
 
 export interface ChannelLevel {
@@ -134,6 +147,7 @@ export interface ElectronAPI {
   onPortConflict: (callback: (data: PortConflictData) => void) => () => void;
   onSdpError: (callback: (error: string) => void) => () => void;
   onSdpStatus: (callback: (data: { status: string; port: number }) => void) => () => void;
+  onPtpStatus: (callback: (data: { streamId: string; status: PtpStatus | null }) => void) => () => void;
 }
 
 export interface PortConflictData {

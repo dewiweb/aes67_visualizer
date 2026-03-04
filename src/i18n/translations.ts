@@ -44,6 +44,7 @@ export const translations = {
     metersFor: 'Meters for',
     devices: 'Devices',
     noDevices: 'No devices detected',
+    exportJson: 'Export JSON',
   },
   fr: {
     appTitle: 'AES67 Visualizer',
@@ -90,6 +91,7 @@ export const translations = {
     metersFor: 'VU-mètres pour',
     devices: 'Appareils',
     noDevices: 'Aucun appareil détecté',
+    exportJson: 'Exporter JSON',
   },
   de: {
     appTitle: 'AES67 Visualizer',
@@ -136,6 +138,7 @@ export const translations = {
     metersFor: 'Pegel für',
     devices: 'Geräte',
     noDevices: 'Keine Geräte erkannt',
+    exportJson: 'JSON exportieren',
   },
   zh: {
     appTitle: 'AES67 专业监视器',
@@ -182,6 +185,7 @@ export const translations = {
     metersFor: '电平表',
     devices: '设备',
     noDevices: '未检测到设备',
+    exportJson: '导出 JSON',
   },
   ja: {
     appTitle: 'AES67 プロモニター',
@@ -228,6 +232,7 @@ export const translations = {
     metersFor: 'メーター',
     devices: 'デバイス',
     noDevices: 'デバイスが検出されません',
+    exportJson: 'JSON エクスポート',
   },
   ko: {
     appTitle: 'AES67 프로 모니터',
@@ -274,6 +279,7 @@ export const translations = {
     metersFor: '미터',
     devices: '장치',
     noDevices: '감지된 장치 없음',
+    exportJson: 'JSON 내보내기',
   },
   es: {
     appTitle: 'AES67 Visualizer',
@@ -320,6 +326,7 @@ export const translations = {
     metersFor: 'Medidores para',
     devices: 'Dispositivos',
     noDevices: 'No se detectaron dispositivos',
+    exportJson: 'Exportar JSON',
   },
   it: {
     appTitle: 'AES67 Visualizer',
@@ -366,6 +373,7 @@ export const translations = {
     metersFor: 'Misuratori per',
     devices: 'Dispositivi',
     noDevices: 'Nessun dispositivo rilevato',
+    exportJson: 'Esporta JSON',
   },
 };
 

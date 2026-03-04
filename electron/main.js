@@ -15,6 +15,7 @@ let sdpProcess;
 let danteProcess;
 let audioProcess;
 let metersProcess;
+let ptpProcess;
 
 // Stream storage for merging SAP and Dante
 let sapStreams = [];
@@ -201,6 +202,15 @@ function initChildProcesses() {
     }
   });
 
+  // PTP Monitor Process
+  ptpProcess = fork(path.join(__dirname, 'processes/ptp.cjs'));
+
+  ptpProcess.on('message', (data) => {
+    if (data.type === 'ptp-status') {
+      sendToRenderer('ptp-status', { streamId: data.streamId, status: data.status });
+    }
+  });
+
   // Audio Playback Process
   audioProcess = fork(path.join(__dirname, 'processes/audio.cjs'));
   
@@ -274,21 +284,30 @@ function setupIpcHandlers() {
       if (metersProcess) {
         metersProcess.send({ type: 'set-interface', address });
       }
+      if (ptpProcess) {
+        ptpProcess.send({ type: 'set-interface', address });
+      }
       
       sendToRenderer('interface-changed', iface);
     }
   });
 
-  // Stream monitoring (meters)
+  // Stream monitoring (meters + PTP)
   ipcMain.on('start-monitoring', (event, stream) => {
     if (metersProcess) {
       metersProcess.send({ type: 'start', stream });
+    }
+    if (ptpProcess && stream.isSupported && stream.mcast) {
+      ptpProcess.send({ type: 'start', stream });
     }
   });
 
   ipcMain.on('stop-monitoring', (event, streamId) => {
     if (metersProcess) {
       metersProcess.send({ type: 'stop', streamId });
+    }
+    if (ptpProcess) {
+      ptpProcess.send({ type: 'stop', streamId });
     }
   });
 
@@ -363,13 +382,16 @@ app.whenReady().then(() => {
   initChildProcesses();
   setupIpcHandlers();
 
-  // Initialize SDP and Meters processes with current interface
+  // Initialize SDP, Meters and PTP processes with current interface
   if (currentNetworkInterface) {
     if (sdpProcess) {
       sdpProcess.send({ type: 'init', address: currentNetworkInterface.address });
     }
     if (metersProcess) {
       metersProcess.send({ type: 'set-interface', address: currentNetworkInterface.address });
+    }
+    if (ptpProcess) {
+      ptpProcess.send({ type: 'set-interface', address: currentNetworkInterface.address });
     }
   }
 
@@ -386,6 +408,7 @@ app.on('window-all-closed', () => {
   if (danteProcess) danteProcess.kill();
   if (audioProcess) audioProcess.kill();
   if (metersProcess) metersProcess.kill();
+  if (ptpProcess) ptpProcess.kill();
 
   if (process.platform !== 'darwin') {
     app.quit();
@@ -397,4 +420,5 @@ app.on('before-quit', () => {
   if (danteProcess) danteProcess.kill();
   if (audioProcess) audioProcess.kill();
   if (metersProcess) metersProcess.kill();
+  if (ptpProcess) ptpProcess.kill();
 });

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Plus, Radio, FileText, Server } from 'lucide-react';
-import { Stream, StreamLevels } from '../types';
+import { Plus, Radio, FileText, Server, Download } from 'lucide-react';
+import { Stream, StreamLevels, StreamPtpStatuses } from '../types';
 import StreamCard from './StreamCard';
 import DevicePanel from './DevicePanel';
 
@@ -10,20 +10,24 @@ interface SidebarProps {
   t: Record<string, string>;
   streams: Stream[];
   streamLevels: StreamLevels;
+  streamPtpStatuses: StreamPtpStatuses;
   playingStreamId: string | null;
   onAddManualStream: (sdp: string) => void;
   onRemoveStream: (streamId: string) => void;
   onPlayStream: (stream: Stream, ch1: number, ch2: number) => void;
+  onExportJson: () => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
   t,
   streams,
   streamLevels,
+  streamPtpStatuses,
   playingStreamId,
   onAddManualStream,
   onRemoveStream,
   onPlayStream,
+  onExportJson,
 }) => {
   const [activeTab, setActiveTab] = useState<TabType>('streams');
   const [sdpInput, setSdpInput] = useState('');
@@ -35,7 +39,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const sapStreams = streams.filter((s) => s.sourceType === 'sap' || s.sourceType === 'dante');
+  const sapStreams = streams.filter((s) => s.sourceType === 'sap' || s.sourceType === 'dante' || s.sourceType === 'ravenna');
   const manualStreams = streams.filter((s) => s.sourceType === 'manual');
 
   // Count unique devices
@@ -108,6 +112,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                   key={stream.id}
                   stream={stream}
                   levels={streamLevels[stream.id]}
+                  ptpStatus={streamPtpStatuses[stream.id]}
                   isPlaying={playingStreamId === stream.id}
                   onPlay={(ch1, ch2) => onPlayStream(stream, ch1, ch2)}
                   onRemove={() => onRemoveStream(stream.id)}
@@ -138,6 +143,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                     key={stream.id}
                     stream={stream}
                     levels={streamLevels[stream.id]}
+                    ptpStatus={streamPtpStatuses[stream.id]}
                     isPlaying={playingStreamId === stream.id}
                     onPlay={(ch1, ch2) => onPlayStream(stream, ch1, ch2)}
                     onRemove={() => onRemoveStream(stream.id)}
@@ -164,6 +170,19 @@ const Sidebar: React.FC<SidebarProps> = ({
             </button>
           </div>
         )}
+      </div>
+
+      {/* Export button */}
+      <div className="p-2 border-t border-slate-700">
+        <button
+          onClick={onExportJson}
+          disabled={streams.length === 0}
+          className="w-full flex items-center justify-center gap-2 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed rounded transition-colors"
+          title="Export streams as JSON"
+        >
+          <Download size={13} />
+          {t.exportJson || 'Export JSON'}
+        </button>
       </div>
     </aside>
   );

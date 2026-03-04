@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import { Play, Square, Trash2, Radio, FileText, GripVertical } from 'lucide-react';
-import { Stream, ChannelLevel } from '../types';
+import { Stream, ChannelLevel, PtpStatus } from '../types';
 import LevelMeter from './LevelMeter';
 
 interface StreamCardProps {
   stream: Stream;
   levels?: ChannelLevel[];
+  ptpStatus?: PtpStatus | null;
   isPlaying?: boolean;
   isDragging?: boolean;
   draggable?: boolean;
@@ -14,9 +15,37 @@ interface StreamCardProps {
   onRemove?: () => void;
 }
 
+const PTP_LOCK_CONFIG = {
+  locked:   { label: 'PTP ✓', cls: 'bg-green-900/50 text-green-300',  dot: 'bg-green-400' },
+  degraded: { label: 'PTP ~', cls: 'bg-yellow-900/50 text-yellow-300', dot: 'bg-yellow-400' },
+  unlocked: { label: 'PTP ✗', cls: 'bg-red-900/50 text-red-300',      dot: 'bg-red-400' },
+  unknown:  { label: 'PTP ?', cls: 'bg-slate-700 text-slate-400',      dot: 'bg-slate-400' },
+} as const;
+
+const PtpBadge: React.FC<{ status: PtpStatus; grandmaster?: string }> = ({ status, grandmaster }) => {
+  const cfg = PTP_LOCK_CONFIG[status.lockStatus];
+  const tooltip = [
+    `PTP: ${status.lockStatus}`,
+    `Drift: ${status.driftPpm} ppm`,
+    grandmaster ? `GM: ${grandmaster}` : null,
+    status.lastSrTime ? `Last SR: ${status.lastSrTime}` : null,
+  ].filter(Boolean).join('\n');
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium ${cfg.cls}`}
+      title={tooltip}
+    >
+      <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot} ${status.lockStatus === 'locked' ? '' : 'animate-pulse'}`} />
+      {cfg.label}
+    </span>
+  );
+};
+
 const StreamCard: React.FC<StreamCardProps> = ({
   stream,
   levels,
+  ptpStatus,
   isPlaying = false,
   isDragging = false,
   draggable = false,
@@ -88,6 +117,8 @@ const StreamCard: React.FC<StreamCardProps> = ({
           <Radio size={14} className="text-blue-400 shrink-0" />
         ) : stream.sourceType === 'dante' ? (
           <Radio size={14} className="text-purple-400 shrink-0" />
+        ) : stream.sourceType === 'ravenna' ? (
+          <Radio size={14} className="text-teal-400 shrink-0" />
         ) : (
           <FileText size={14} className="text-green-400 shrink-0" />
         )}
@@ -118,7 +149,12 @@ const StreamCard: React.FC<StreamCardProps> = ({
               Dante
             </span>
           )}
-          {stream.danteDevice?.isAES67 && (
+          {stream.danteDevice?.isRAVENNA && (
+            <span className="bg-teal-900/50 px-1.5 py-0.5 rounded text-teal-300">
+              RAVENNA
+            </span>
+          )}
+          {stream.danteDevice?.isAES67 && !stream.danteDevice?.isRAVENNA && (
             <span className="bg-blue-900/50 px-1.5 py-0.5 rounded text-blue-300">
               AES67
             </span>
@@ -127,6 +163,9 @@ const StreamCard: React.FC<StreamCardProps> = ({
             <span className="bg-yellow-900/50 px-1.5 py-0.5 rounded text-yellow-300">
               ⚠ Sub
             </span>
+          )}
+          {ptpStatus && (
+            <PtpBadge status={ptpStatus} grandmaster={stream.ptpGrandmaster} />
           )}
         </div>
 

@@ -12,6 +12,7 @@ import { translations, Language, languageNames } from './i18n/translations';
 import {
   Stream,
   StreamLevels,
+  StreamPtpStatuses,
   MonitorSlot,
   NetworkInterface,
   Settings,
@@ -34,6 +35,7 @@ const App: React.FC = () => {
   // Streams state
   const [streams, setStreams] = useState<Stream[]>([]);
   const [streamLevels, setStreamLevels] = useState<StreamLevels>({});
+  const [streamPtpStatuses, setStreamPtpStatuses] = useState<StreamPtpStatuses>({});
 
   // Monitor slots
   const [slots, setSlots] = useState<MonitorSlot[]>(
@@ -125,6 +127,18 @@ const App: React.FC = () => {
       setPortConflict(null);
     });
 
+    // Subscribe to PTP status updates
+    const unsubPtpStatus = window.api.onPtpStatus(({ streamId, status }) => {
+      setStreamPtpStatuses((prev) => {
+        if (status === null) {
+          const next = { ...prev };
+          delete next[streamId];
+          return next;
+        }
+        return { ...prev, [streamId]: status };
+      });
+    });
+
     return () => {
       unsubStreams();
       unsubLevels();
@@ -132,6 +146,7 @@ const App: React.FC = () => {
       unsubInterface();
       unsubPortConflict();
       unsubSdpStatus();
+      unsubPtpStatus();
     };
   }, []);
 
@@ -203,6 +218,38 @@ const App: React.FC = () => {
       window.api.addManualStream(sdp);
     }
   }, []);
+
+  // Export streams as JSON
+  const handleExportJson = useCallback(() => {
+    const data = {
+      exportedAt: new Date().toISOString(),
+      streams: streams.map((s) => ({
+        id: s.id,
+        name: s.name,
+        mcast: s.mcast,
+        port: s.port,
+        codec: s.codec,
+        sampleRate: s.sampleRate,
+        channels: s.channels,
+        ptime: s.ptime,
+        sourceType: s.sourceType,
+        ptpGrandmaster: s.ptpGrandmaster,
+        ptpVersion: s.ptpVersion,
+        ptpDomain: s.ptpDomain,
+        ptpStatus: streamPtpStatuses[s.id] || null,
+        tool: s.tool,
+        dante: s.dante,
+        danteDevice: s.danteDevice,
+      })),
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `aes67-streams-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [streams, streamPtpStatuses]);
 
   // Handle stream removal
   const handleRemoveStream = useCallback((streamId: string) => {
@@ -352,16 +399,19 @@ const App: React.FC = () => {
             t={t}
             streams={filteredStreams}
             streamLevels={streamLevels}
+            streamPtpStatuses={streamPtpStatuses}
             playingStreamId={playingStreamId}
             onAddManualStream={handleAddManualStream}
             onRemoveStream={handleRemoveStream}
             onPlayStream={handlePlayStream}
+            onExportJson={handleExportJson}
           />
 
           <MonitoringWall
             t={t}
             slots={slots}
             streamLevels={streamLevels}
+            streamPtpStatuses={streamPtpStatuses}
             onRemoveFromSlot={handleRemoveFromSlot}
           />
         </div>

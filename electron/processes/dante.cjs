@@ -1,6 +1,6 @@
 /**
- * Dante Discovery Child Process
- * Uses mDNS/DNS-SD (Bonjour) to discover Dante devices and channels
+ * Network Audio Discovery Child Process
+ * Uses mDNS/DNS-SD (Bonjour) to discover Dante, RAVENNA and AES67 devices
  * Based on network-audio-controller approach
  */
 
@@ -12,6 +12,16 @@ const DANTE_SERVICES = [
   '_netaudio-arc._udp',  // Audio Routing Control
   '_netaudio-cmc._udp',  // Clocking/Management Control
   '_netaudio-dbc._udp',  // Device Browser Control
+];
+
+// RAVENNA / AES67 mDNS service types
+const RAVENNA_SERVICES = [
+  '_ravenna._tcp',       // RAVENNA device discovery
+  '_ravenna-session._tcp', // RAVENNA session announcement
+];
+
+const AES67_SERVICES = [
+  '_aes67._udp',         // AES67 device discovery
 ];
 
 let bonjour = null;
@@ -29,66 +39,112 @@ function generateStreamId(device, channelInfo) {
 }
 
 /**
+ * Detect protocol family from service type
+ */
+function getProtocolFamily(serviceType) {
+  if (DANTE_SERVICES.includes(serviceType)) return 'dante';
+  if (RAVENNA_SERVICES.includes(serviceType)) return 'ravenna';
+  if (AES67_SERVICES.includes(serviceType)) return 'aes67';
+  return 'unknown';
+}
+
+/**
  * Parse Dante device from mDNS service
  */
 function parseDevice(service) {
   const txt = service.txt || {};
-  
-  return {
+  const family = getProtocolFamily(service.type);
+
+  const base = {
     name: service.name,
     host: service.host,
     addresses: service.addresses || [],
     port: service.port,
     type: service.type,
-    // Dante-specific properties from TXT records
-    id: txt.id || null,
-    model: txt.model || null,
-    manufacturer: txt.mf || txt.manufacturer || 'Audinate',
-    sampleRate: txt.rate ? parseInt(txt.rate) : 48000,
-    latency: txt.latency_ns ? parseInt(txt.latency_ns) : null,
-    channels: txt.chans ? parseInt(txt.chans) : null,
-    txChannels: txt.txc ? parseInt(txt.txc) : null,
-    rxChannels: txt.rxc ? parseInt(txt.rxc) : null,
-    isDante: true,
-    isAES67: txt.aes67 === '1' || txt.aes67 === 'true',
-    software: txt.router_info === '"Dante Via"' ? 'Dante Via' : null,
+    protocolFamily: family,
   };
+
+  if (family === 'dante') {
+    return {
+      ...base,
+      id: txt.id || null,
+      model: txt.model || null,
+      manufacturer: txt.mf || txt.manufacturer || 'Audinate',
+      sampleRate: txt.rate ? parseInt(txt.rate) : 48000,
+      latency: txt.latency_ns ? parseInt(txt.latency_ns) : null,
+      channels: txt.chans ? parseInt(txt.chans) : null,
+      txChannels: txt.txc ? parseInt(txt.txc) : null,
+      rxChannels: txt.rxc ? parseInt(txt.rxc) : null,
+      isDante: true,
+      isAES67: txt.aes67 === '1' || txt.aes67 === 'true',
+      software: txt.router_info === '"Dante Via"' ? 'Dante Via' : null,
+    };
+  }
+
+  if (family === 'ravenna' || family === 'aes67') {
+    // RAVENNA/AES67 TXT records: ver, src, snk, ch, sr, fmt, ptp
+    return {
+      ...base,
+      id: txt.id || null,
+      model: txt.model || txt.dname || null,
+      manufacturer: txt.mf || txt.manufacturer || null,
+      sampleRate: txt.sr ? parseInt(txt.sr) : 48000,
+      channels: txt.ch ? parseInt(txt.ch) : null,
+      txChannels: txt.src ? parseInt(txt.src) : null,
+      rxChannels: txt.snk ? parseInt(txt.snk) : null,
+      ptpGrandmaster: txt.ptp || null,
+      isDante: false,
+      isAES67: true,
+      isRAVENNA: family === 'ravenna',
+      software: txt.ver || null,
+    };
+  }
+
+  return base;
 }
 
 /**
- * Convert Dante device to stream format for UI
+ * Convert discovered device to stream format for UI
  */
 function deviceToStream(device) {
   const ipv4 = device.addresses.find(addr => addr.includes('.')) || device.addresses[0];
   
   if (!ipv4) return null;
 
-  // For Dante, we create a "virtual" stream representation
-  // Real Dante streams require subscription via Dante protocol
   const txChannels = device.txChannels || device.channels || 2;
-  
-  return {
+  const family = device.protocolFamily || 'dante';
+
+  const base = {
     id: generateStreamId(device, null),
     name: device.name,
-    mcast: ipv4, // Dante uses unicast, but we store the device IP
-    port: device.port || 4440, // Default Dante audio port
+    mcast: ipv4,
+    port: device.port || (family === 'dante' ? 4440 : 5004),
     channels: txChannels,
     sampleRate: device.sampleRate || 48000,
-    codec: 'L24', // Dante typically uses 24-bit
+    codec: 'L24',
     ptime: 1,
-    sourceType: 'dante',
     isSupported: true,
-    dante: true,
+    dante: family === 'dante',
     danteDevice: {
       host: device.host,
       model: device.model,
-      manufacturer: device.manufacturer,
-      isAES67: device.isAES67,
+      manufacturer: device.manufacturer || (family === 'ravenna' ? 'RAVENNA' : 'AES67'),
+      isAES67: device.isAES67 || false,
+      isRAVENNA: device.isRAVENNA || false,
       software: device.software,
     },
-    // Note: Pure Dante streams cannot be monitored without subscription
-    // This is informational only unless AES67 mode is enabled
-    requiresSubscription: !device.isAES67,
+    requiresSubscription: family === 'dante' && !device.isAES67,
+  };
+
+  if (family === 'dante') {
+    return { ...base, sourceType: 'dante' };
+  }
+
+  // RAVENNA / AES67 devices — mark as ravenna source type
+  return {
+    ...base,
+    sourceType: 'ravenna',
+    ptpGrandmaster: device.ptpGrandmaster || null,
   };
 }
 
@@ -150,7 +206,7 @@ function onServiceDown(service) {
 }
 
 /**
- * Initialize mDNS browsing
+ * Initialize mDNS browsing for Dante, RAVENNA and AES67
  */
 function init() {
   if (bonjour) {
@@ -160,22 +216,19 @@ function init() {
   try {
     bonjour = new Bonjour();
     
-    console.log('[Dante] Starting mDNS discovery...');
+    console.log('[Discovery] Starting mDNS discovery (Dante + RAVENNA + AES67)...');
     
-    // Browse for each Dante service type
-    for (const serviceType of DANTE_SERVICES) {
+    const allServices = [...DANTE_SERVICES, ...RAVENNA_SERVICES, ...AES67_SERVICES];
+
+    for (const serviceType of allServices) {
       const browser = bonjour.find({ type: serviceType }, onServiceUp);
-      
-      // Note: bonjour-service doesn't have a direct 'down' event on find
-      // Services timeout naturally when they stop announcing
-      
       browsers.push(browser);
-      console.log(`[Dante] Browsing for ${serviceType}`);
+      console.log(`[Discovery] Browsing for ${serviceType}`);
     }
 
     process.send({ type: 'status', status: 'browsing' });
   } catch (e) {
-    console.error('[Dante] Init error:', e.message);
+    console.error('[Discovery] Init error:', e.message);
     process.send({ type: 'error', message: e.message });
   }
 }
