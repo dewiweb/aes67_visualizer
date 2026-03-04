@@ -32,7 +32,7 @@ let persistentData = store.get('persistentData', {
   },
 });
 
-let currentNetworkInterface = store.get('interface');
+let currentNetworkInterface = store.get('interface') || null;
 let currentAudioDevice = store.get('audioInterface');
 
 /**
@@ -277,9 +277,9 @@ function setupIpcHandlers() {
       currentNetworkInterface = iface;
       store.set('interface', iface);
       
-      // Notify child processes
+      // Reinitialize SDP with new interface (full restart)
       if (sdpProcess) {
-        sdpProcess.send({ type: 'set-interface', address });
+        sdpProcess.send({ type: 'init', address });
       }
       if (metersProcess) {
         metersProcess.send({ type: 'set-interface', address });
@@ -381,6 +381,16 @@ app.whenReady().then(() => {
   createWindow();
   initChildProcesses();
   setupIpcHandlers();
+
+  // Auto-select first interface if none saved
+  if (!currentNetworkInterface) {
+    const ifaces = getNetworkInterfaces();
+    if (ifaces.length > 0) {
+      currentNetworkInterface = ifaces[0];
+      store.set('interface', currentNetworkInterface);
+      console.log(`[Main] Auto-selected interface: ${currentNetworkInterface.address}`);
+    }
+  }
 
   // Initialize SDP, Meters and PTP processes with current interface
   if (currentNetworkInterface) {
