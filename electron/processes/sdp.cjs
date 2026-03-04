@@ -107,7 +107,7 @@ function parseSdp(sdp) {
     const tsRefclkMatch = sdp.raw.match(/a=ts-refclk:ptp=(IEEE1588-\d+):([0-9A-Fa-f-]+):?(\d*)/i);
     if (tsRefclkMatch) {
       sdp.ptpVersion = tsRefclkMatch[1];
-      sdp.ptpGrandmaster = tsRefclkMatch[2];
+      sdp.ptpGrandmaster = tsRefclkMatch[2].toUpperCase();
       sdp.ptpDomain = tsRefclkMatch[3] || '0';
     } else {
       // Check for other clock reference formats
