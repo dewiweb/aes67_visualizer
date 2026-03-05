@@ -7,6 +7,11 @@
 'use strict';
 
 const { spawn } = require('child_process');
+const fs = require('fs');
+const LOG_FILE = require('os').tmpdir() + '/aes67_discovery.log';
+function flog(msg) {
+  try { fs.appendFileSync(LOG_FILE, new Date().toISOString().slice(11,23) + ' [mdns] ' + msg + '\n'); } catch(_) {}
+}
 
 // mDNS service types and their protocol families
 // Sources: network-audio-controller, Inferno (gitlab.com/lumifaza/inferno)
@@ -74,11 +79,14 @@ function lookupService(name, serviceType, family, onUp) {
     buffer = lines.pop();
 
     for (const line of lines) {
+      flog(`lookup[${name}] raw: ${JSON.stringify(line)}`);
+
       // Line 1: "  <name> can be reached at <host>:<port> (interface N)"
       const reachMatch = line.match(/can be reached at ([\w.-]+):(\d+)/i);
       if (reachMatch) {
         pendingHost = reachMatch[1];
         pendingPort = parseInt(reachMatch[2]) || 0;
+        flog(`lookup[${name}] host=${pendingHost} port=${pendingPort}`);
         continue;
       }
 
@@ -122,6 +130,7 @@ function lookupService(name, serviceType, family, onUp) {
 
   proc.on('close', () => {
     clearTimeout(timer);
+    flog(`lookup[${name}] closed, pendingHost=${pendingHost}`);
     // If we got a host but no TXT line came (e.g. device has no TXT records), still emit
     if (pendingHost) {
       const host = pendingHost;

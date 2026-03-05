@@ -19,6 +19,13 @@ const arc     = require('../protocols/arc.cjs');
 const rtsp    = require('../protocols/rtsp.cjs');
 const mdns    = require('../protocols/mdns.cjs');
 const ravenna = require('../protocols/ravenna.cjs');
+const fs      = require('fs');
+
+const LOG_FILE = require('os').tmpdir() + '/aes67_discovery.log';
+fs.writeFileSync(LOG_FILE, `--- discovery started ${new Date().toISOString()} ---\n`);
+function flog(msg) {
+  fs.appendFileSync(LOG_FILE, new Date().toISOString().slice(11,23) + ' ' + msg + '\n');
+}
 
 // Device registry: host/ip → device info
 const devices   = new Map();
@@ -129,7 +136,9 @@ function scheduleUpdate() {
 
 function onServiceUp(service) {
   const txt = service.txt || {};
-  console.log(`[Discovery] Found: ${service.name} (${service.type || service.family}) host=${service.host} ip=${(service.addresses||[]).join(',')} txt=${JSON.stringify(txt)}`);
+  const msg = `Found: ${service.name} (${service.type||service.family}) host=${service.host} ip=${(service.addresses||[]).join(',')} txt=${JSON.stringify(txt)}`;
+  console.log('[Discovery] ' + msg);
+  flog(msg);
 
   const device   = parseService(service);
   const existing = devices.get(service.host);
@@ -154,6 +163,7 @@ function onServiceUp(service) {
 }
 
 function onServiceDown(service) {
+  flog('Lost: ' + service.name);
   console.log(`[Discovery] Lost: ${service.name}`);
   if (service.host) {
     devices.delete(service.host);
@@ -170,6 +180,7 @@ async function enrichWithArc(device) {
 
   const result = await arc.query(ip, arcPort);
   if (!result) {
+    flog(`ARC no-response: ${device.name} (${ip}:${arcPort})`);
     console.log(`[ARC] ${device.name} (${ip}:${arcPort}): no response`);
     return;
   }
