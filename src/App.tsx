@@ -14,6 +14,7 @@ import {
   StreamLevels,
   StreamPtpStatuses,
   DanteDevice,
+  PtpClock,
   MonitorSlot,
   NetworkInterface,
   Settings,
@@ -38,6 +39,7 @@ const App: React.FC = () => {
   const [streamLevels, setStreamLevels] = useState<StreamLevels>({});
   const [streamPtpStatuses, setStreamPtpStatuses] = useState<StreamPtpStatuses>({});
   const [danteDevices, setDanteDevices] = useState<DanteDevice[]>([]);
+  const [ptpClocks, setPtpClocks] = useState<PtpClock[]>([]);
 
   // Monitor slots
   const [slots, setSlots] = useState<MonitorSlot[]>(
@@ -134,8 +136,8 @@ const App: React.FC = () => {
       setDanteDevices(devices);
     });
 
-    // Subscribe to PTP status updates
-    const unsubPtpStatus = window.api.onPtpStatus(({ streamId, status }) => {
+    // Subscribe to PTP status updates (legacy RTCP-based, kept for StreamCard badges)
+    const unsubPtpStatus = window.api.onPtpStatus && window.api.onPtpStatus(({ streamId, status }) => {
       setStreamPtpStatuses((prev) => {
         if (status === null) {
           const next = { ...prev };
@@ -146,6 +148,11 @@ const App: React.FC = () => {
       });
     });
 
+    // Subscribe to PTP clocks (IEEE 1588 network-wide monitoring)
+    const unsubPtpClocks = window.api.onPtpClocks((clocks) => {
+      setPtpClocks(clocks);
+    });
+
     return () => {
       unsubStreams();
       unsubLevels();
@@ -153,7 +160,8 @@ const App: React.FC = () => {
       unsubInterface();
       unsubPortConflict();
       unsubSdpStatus();
-      unsubPtpStatus();
+      if (unsubPtpStatus) unsubPtpStatus();
+      unsubPtpClocks();
       unsubDanteDevices();
     };
   }, []);
@@ -409,6 +417,7 @@ const App: React.FC = () => {
             streamLevels={streamLevels}
             streamPtpStatuses={streamPtpStatuses}
             danteDevices={danteDevices}
+            ptpClocks={ptpClocks}
             playingStreamId={playingStreamId}
             onAddManualStream={handleAddManualStream}
             onRemoveStream={handleRemoveStream}

@@ -93,6 +93,30 @@ export interface StreamPtpStatuses {
   [streamId: string]: PtpStatus | null;
 }
 
+export interface PtpClock {
+  clockIdentity: string;
+  displayId: string;
+  domainNumber: number;
+  isGrandmaster: boolean;
+  grandmasterIdentity: string | null;
+  grandmasterDisplayId: string | null;
+  priority1: number | null;
+  priority2: number | null;
+  clockClass: number | null;
+  clockAccuracy: string | null;
+  timeSource: string | null;
+  stepsRemoved: number | null;
+  currentUtcOffset: number | null;
+  logSyncInterval: number | null;
+  logAnnounceInterval: number | null;
+  offsetMeanUs: number | null;
+  offsetStddevUs: number | null;
+  offsetSamples: number;
+  lastSeen: number;
+  announceCount: number;
+  syncCount: number;
+}
+
 export interface ChannelLevel {
   current: number; // dBFS
   peak: number;    // dBFS peak hold
@@ -168,6 +192,7 @@ export interface ElectronAPI {
   onSdpError: (callback: (error: string) => void) => () => void;
   onSdpStatus: (callback: (data: { status: string; port: number }) => void) => () => void;
   onPtpStatus: (callback: (data: { streamId: string; status: PtpStatus | null }) => void) => () => void;
+  onPtpClocks: (callback: (clocks: PtpClock[]) => void) => () => void;
   onDanteDevices: (callback: (devices: DanteDevice[]) => void) => () => void;
 }
 

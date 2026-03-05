@@ -194,8 +194,10 @@ function initChildProcesses() {
   ptpProcess = fork(path.join(__dirname, 'processes/ptp.cjs'));
 
   ptpProcess.on('message', (data) => {
-    if (data.type === 'ptp-status') {
-      sendToRenderer('ptp-status', { streamId: data.streamId, status: data.status });
+    if (data.type === 'ptp-clocks') {
+      sendToRenderer('ptp-clocks', data.clocks);
+    } else if (data.type === 'ptp-status') {
+      console.log('[PTP]', data.status, data.interface || '');
     }
   });
 
@@ -279,7 +281,7 @@ function setupIpcHandlers() {
         metersProcess.send({ type: 'set-interface', address });
       }
       if (ptpProcess) {
-        ptpProcess.send({ type: 'set-interface', address });
+        ptpProcess.send({ type: 'start', interface: address });
       }
       
       sendToRenderer('interface-changed', iface);
@@ -291,18 +293,14 @@ function setupIpcHandlers() {
     if (metersProcess) {
       metersProcess.send({ type: 'start', stream });
     }
-    if (ptpProcess && stream.isSupported && stream.mcast) {
-      ptpProcess.send({ type: 'start', stream });
-    }
+    // PTP monitoring is now network-wide (ports 319/320), not per-stream
   });
 
   ipcMain.on('stop-monitoring', (event, streamId) => {
     if (metersProcess) {
       metersProcess.send({ type: 'stop', streamId });
     }
-    if (ptpProcess) {
-      ptpProcess.send({ type: 'stop', streamId });
-    }
+    // PTP monitoring is network-wide, no per-stream stop needed
   });
 
   // Audio playback
@@ -395,7 +393,7 @@ app.whenReady().then(() => {
       metersProcess.send({ type: 'set-interface', address: currentNetworkInterface.address });
     }
     if (ptpProcess) {
-      ptpProcess.send({ type: 'set-interface', address: currentNetworkInterface.address });
+      ptpProcess.send({ type: 'start', interface: currentNetworkInterface.address });
     }
   }
 

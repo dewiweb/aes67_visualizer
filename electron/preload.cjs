@@ -61,10 +61,10 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeAllListeners('sdp-status');
   },
 
-  // PTP monitoring
-  onPtpStatus: (callback) => {
-    ipcRenderer.on('ptp-status', (_, data) => callback(data));
-    return () => ipcRenderer.removeAllListeners('ptp-status');
+  // PTP monitoring (network-wide, IEEE 1588 ports 319/320)
+  onPtpClocks: (callback) => {
+    ipcRenderer.on('ptp-clocks', (_, data) => callback(data));
+    return () => ipcRenderer.removeAllListeners('ptp-clocks');
   },
 
   // Dante device list (pure Dante without AES67)

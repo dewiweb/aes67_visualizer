@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { Plus, Radio, FileText, Server, Download } from 'lucide-react';
-import { Stream, StreamLevels, StreamPtpStatuses, DanteDevice } from '../types';
+import { Plus, Radio, FileText, Server, Download, Clock } from 'lucide-react';
+import { Stream, StreamLevels, StreamPtpStatuses, DanteDevice, PtpClock } from '../types';
 import StreamCard from './StreamCard';
 import DevicePanel from './DevicePanel';
+import PtpPanel from './PtpPanel';
 
-type TabType = 'streams' | 'devices' | 'manual';
+type TabType = 'streams' | 'devices' | 'ptp' | 'manual';
 
 interface SidebarProps {
   t: Record<string, string>;
@@ -12,6 +13,7 @@ interface SidebarProps {
   streamLevels: StreamLevels;
   streamPtpStatuses: StreamPtpStatuses;
   danteDevices: DanteDevice[];
+  ptpClocks: PtpClock[];
   playingStreamId: string | null;
   onAddManualStream: (sdp: string) => void;
   onRemoveStream: (streamId: string) => void;
@@ -25,6 +27,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   streamLevels,
   streamPtpStatuses,
   danteDevices,
+  ptpClocks,
   playingStreamId,
   onAddManualStream,
   onRemoveStream,
@@ -81,6 +84,22 @@ const Sidebar: React.FC<SidebarProps> = ({
           </span>
         </button>
         <button
+          onClick={() => setActiveTab('ptp')}
+          className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium transition-colors ${
+            activeTab === 'ptp'
+              ? 'bg-slate-700 text-white border-b-2 border-amber-500'
+              : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+          }`}
+        >
+          <Clock size={14} />
+          <span>PTP</span>
+          {ptpClocks.length > 0 && (
+            <span className="text-xs bg-amber-700 px-1.5 py-0.5 rounded-full">
+              {ptpClocks.length}
+            </span>
+          )}
+        </button>
+        <button
           onClick={() => setActiveTab('manual')}
           className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium transition-colors ${
             activeTab === 'manual'
@@ -124,6 +143,11 @@ const Sidebar: React.FC<SidebarProps> = ({
               ))
             )}
           </div>
+        )}
+
+        {/* PTP Tab */}
+        {activeTab === 'ptp' && (
+          <PtpPanel clocks={ptpClocks} />
         )}
 
         {/* Devices Tab */}
