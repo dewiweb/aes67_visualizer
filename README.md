@@ -163,6 +163,7 @@ start_code(2=0x27FF) + total_length(2) + seqnum(2) + opcode(2) + result_code(2) 
 | [chris-ritsen/network-audio-controller](https://github.com/chris-ritsen/network-audio-controller) | Python | Dante ARC protocol opcodes, packet format, const.py |
 | [teodly/inferno](https://github.com/teodly/inferno) (mirror of [lumifaza/inferno](https://gitlab.com/lumifaza/inferno)) | Rust | ARC packet header layout, pagination (`0x8112`), flows control port 4455, mDNS service types `_netaudio-chan`, `_netaudio-bund` |
 | [soundondigital/ravennakit](https://github.com/soundondigital/ravennakit) | C++ | RAVENNA RTSP paths (`/by-name/`, `/by-id/`), RTP port 5004, PTPv2 profiles, DNS-SD service types |
+| [martim01/pam](https://github.com/martim01/pam) | C++ | AES67/RAVENNA/ST2110 monitor — confirms RTP port 5004, RTSP port 554 for mDNS, PTP domain from `a=ts-refclk`/`a=clock-domain` SDP attributes, PTP hybrid mode (multicast+unicast), AM824 codec (AES3/ST2110-31), Livewire (Axia) discovery alongside SAP |
 | [bondagit/aes67-linux-daemon](https://github.com/bondagit/aes67-linux-daemon) | C++ | AES67 reference implementation |
 
 ### Standards & Specifications
