@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
-import { Stream, Device, DanteDevice } from '../types';
-import { Server, Radio, Clock, Layers, ChevronDown, ChevronRight, AlertCircle, ArrowUpFromLine, ArrowDownToLine } from 'lucide-react';
+import { Stream, DanteDevice } from '../types';
+import { Server, Clock, Layers, ChevronDown, ChevronRight, AlertCircle, ArrowUpFromLine, ArrowDownToLine } from 'lucide-react';
 
 interface DevicePanelProps {
   streams: Stream[];
@@ -9,72 +9,64 @@ interface DevicePanelProps {
   onStreamClick?: (stream: Stream) => void;
 }
 
+/** Unified view entry: mDNS device info + SAP streams, keyed by IP */
+interface UnifiedDevice {
+  ip: string;
+  dante: DanteDevice | null;
+  streams: Stream[];
+  ptpGrandmaster?: string;
+  ptpVersion?: string;
+  ptpDomain?: string;
+}
+
 /**
- * Aggregate streams by device IP
+ * Build a single unified list keyed by IP.
+ * Combines danteDevices (mDNS/ARC) with SAP streams — one entry per IP.
  */
-function aggregateDevices(streams: Stream[]): Device[] {
-  const deviceMap = new Map<string, Device>();
+function buildUnifiedList(danteDevices: DanteDevice[], streams: Stream[]): UnifiedDevice[] {
+  const map = new Map<string, UnifiedDevice>();
 
+  // Seed from mDNS/ARC devices
+  for (const dd of danteDevices) {
+    const ip = dd.ip || dd.addresses.find(a => /^\d+\./.test(a)) || dd.host || '';
+    if (!ip) continue;
+    if (!map.has(ip)) map.set(ip, { ip, dante: dd, streams: [] });
+    else map.get(ip)!.dante = dd;
+  }
+
+  // Merge SAP streams into existing entries or create new ones
   for (const stream of streams) {
-    // Use deviceIp (from SDP origin) or sapSourceIp as fallback
     const ip = stream.deviceIp || stream.sapSourceIp || 'unknown';
-    
-    if (!deviceMap.has(ip)) {
-      deviceMap.set(ip, {
-        ip,
-        name: ip === 'unknown' ? 'Unknown Device' : ip,
-        streams: [],
-        streamCount: 0,
-        channelCount: 0,
-      });
-    }
-
-    const device = deviceMap.get(ip)!;
-    device.streams.push(stream);
-    device.streamCount++;
-    device.channelCount += stream.channels || 0;
-
-    // Aggregate device info from streams
-    if (stream.ptpGrandmaster && !device.ptpGrandmaster) {
-      device.ptpGrandmaster = stream.ptpGrandmaster;
-      device.ptpVersion = stream.ptpVersion;
-      device.ptpDomain = stream.ptpDomain;
-    }
-    if (stream.tool && !device.tool) {
-      device.tool = stream.tool;
+    if (!map.has(ip)) map.set(ip, { ip, dante: null, streams: [] });
+    const entry = map.get(ip)!;
+    entry.streams.push(stream);
+    if (stream.ptpGrandmaster && !entry.ptpGrandmaster) {
+      entry.ptpGrandmaster = stream.ptpGrandmaster;
+      entry.ptpVersion = stream.ptpVersion;
+      entry.ptpDomain  = stream.ptpDomain;
     }
   }
 
-  return Array.from(deviceMap.values()).sort((a, b) => a.ip.localeCompare(b.ip));
+  return Array.from(map.values()).sort((a, b) => a.ip.localeCompare(b.ip));
 }
 
 const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onStreamClick }) => {
-  const [expandedDevices, setExpandedDevices]     = React.useState<Set<string>>(new Set());
-  const [expandedDanteDevs, setExpandedDanteDevs] = React.useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
 
-  const toggleDanteDevice = (key: string) => {
-    setExpandedDanteDevs(prev => {
+  const toggle = (ip: string) => {
+    setExpanded(prev => {
       const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
+      if (next.has(ip)) next.delete(ip); else next.add(ip);
       return next;
     });
   };
 
-  const devices = useMemo(() => aggregateDevices(streams), [streams]);
+  const unified = useMemo(
+    () => buildUnifiedList(danteDevices, streams),
+    [danteDevices, streams]
+  );
 
-  const toggleDevice = (ip: string) => {
-    setExpandedDevices(prev => {
-      const next = new Set(prev);
-      if (next.has(ip)) {
-        next.delete(ip);
-      } else {
-        next.add(ip);
-      }
-      return next;
-    });
-  };
-
-  if (devices.length === 0 && danteDevices.length === 0) {
+  if (unified.length === 0) {
     return (
       <div className="p-4 text-slate-500 text-sm text-center">
         {t.noDevices || 'No devices detected'}
@@ -84,92 +76,121 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onS
 
   return (
     <div className="space-y-2 p-2">
+      {unified.map(({ ip, dante: dd, streams: devStreams, ptpGrandmaster, ptpVersion, ptpDomain }) => {
+        const isExpanded   = expanded.has(ip);
+        const hasChannels  = (dd?.txChannelNames?.length ?? 0) > 0 || (dd?.rxChannelNames?.length ?? 0) > 0;
+        const isExpandable = hasChannels || devStreams.length > 0;
+        const totalCh      = devStreams.reduce((s, st) => s + (st.channels || 0), 0);
 
-      {/* Dante/RAVENNA devices discovered via ARC probe or mDNS */}
-      {danteDevices.map((dd) => {
-        const ip         = dd.ip || dd.addresses.find(a => a.includes('.')) || dd.host || '';
-        const sapDevice  = devices.find(d => d.ip === ip);
-        const hasChannels = (dd.txChannelNames?.length > 0) || (dd.rxChannelNames?.length > 0);
-        const isExpanded = expandedDanteDevs.has(ip);
+        // Protocol colour: teal=RAVENNA, blue=AES67, purple=Dante, slate=SAP-only
+        const borderColor = dd?.isRAVENNA ? 'border-teal-900/40'
+                          : dd?.isAES67   ? 'border-blue-900/40'
+                          : dd            ? 'border-purple-900/40'
+                          : 'border-slate-700/40';
+        const iconColor   = dd?.isRAVENNA ? 'text-teal-400'
+                          : dd?.isAES67   ? 'text-blue-400'
+                          : dd            ? 'text-purple-400'
+                          : 'text-slate-400';
 
         return (
-          <div
-            key={ip}
-            className="bg-slate-800 rounded-lg overflow-hidden border border-purple-900/40"
-          >
-            {/* Header — clickable if channel names available */}
+          <div key={ip} className={`bg-slate-800 rounded-lg overflow-hidden border ${borderColor}`}>
             <button
-              onClick={() => hasChannels && toggleDanteDevice(ip)}
+              onClick={() => isExpandable && toggle(ip)}
               className={`w-full flex items-center gap-3 p-3 text-left ${
-                hasChannels ? 'hover:bg-slate-700/50 cursor-pointer' : 'cursor-default'
+                isExpandable ? 'hover:bg-slate-700/50 cursor-pointer' : 'cursor-default'
               } transition-colors`}
             >
-              <Server size={18} className="text-purple-400 shrink-0" />
+              <Server size={18} className={`${iconColor} shrink-0`} />
+
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-medium text-sm text-white truncate">{dd.name || ip}</span>
-                  {dd.isRAVENNA ? (
+                {/* Row 1: name + protocol badges */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="font-medium text-sm text-white truncate">
+                    {dd?.name || ip}
+                  </span>
+                  {dd?.isRAVENNA && (
                     <span className="text-[10px] bg-teal-900/50 text-teal-300 px-1.5 py-0.5 rounded">RAVENNA</span>
-                  ) : (
+                  )}
+                  {dd?.isDante && !dd.isRAVENNA && (
                     <span className="text-[10px] bg-purple-900/50 text-purple-300 px-1.5 py-0.5 rounded">Dante</span>
                   )}
-                  {dd.isAES67 && (
+                  {dd?.isAES67 && (
                     <span className="text-[10px] bg-blue-900/50 text-blue-300 px-1.5 py-0.5 rounded">AES67</span>
                   )}
-                  {sapDevice && (
+                  {devStreams.length > 0 && (
                     <span className="text-[10px] bg-green-900/50 text-green-300 px-1.5 py-0.5 rounded">
-                      {sapDevice.streamCount} streams
+                      {devStreams.length} {t.streams || 'streams'}
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-3 text-xs text-slate-400 mt-0.5 flex-wrap">
+
+                {/* Row 2: IP + manufacturer + model + software */}
+                <div className="flex items-center gap-2 text-xs mt-0.5 flex-wrap">
                   <span className="font-mono text-slate-500">{ip}</span>
-                  {dd.manufacturer && <span className="text-slate-400">{dd.manufacturer}</span>}
-                  {dd.model && <span className="text-slate-500">{dd.model}</span>}
-                  {dd.software && <span className="text-slate-600 italic">{dd.software}</span>}
+                  {dd?.manufacturer && <span className="text-slate-400">{dd.manufacturer}</span>}
+                  {dd?.model        && <span className="text-slate-500">{dd.model}</span>}
+                  {dd?.software     && <span className="text-slate-600 italic">{dd.software}</span>}
                 </div>
-                <div className="flex items-center gap-3 text-xs text-slate-500 mt-0.5 flex-wrap">
-                  {dd.txChannels != null && (
+
+                {/* Row 3: TX/RX counts + sample rate + stream channel count + fw */}
+                <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5 flex-wrap">
+                  {dd?.txChannels != null && (
                     <span className="flex items-center gap-1 text-emerald-400">
-                      <ArrowUpFromLine size={10} />
-                      {dd.txChannels} TX
+                      <ArrowUpFromLine size={10} />{dd.txChannels} TX
                     </span>
                   )}
-                  {dd.rxChannels != null && (
+                  {dd?.rxChannels != null && (
                     <span className="flex items-center gap-1 text-sky-400">
-                      <ArrowDownToLine size={10} />
-                      {dd.rxChannels} RX
+                      <ArrowDownToLine size={10} />{dd.rxChannels} RX
                     </span>
                   )}
-                  {dd.sampleRate && <span>{dd.sampleRate / 1000}kHz</span>}
-                  {dd.routerVers && <span className="text-slate-600">fw {dd.routerVers}</span>}
+                  {dd?.sampleRate && <span>{dd.sampleRate / 1000}kHz</span>}
+                  {totalCh > 0 && (
+                    <span className="flex items-center gap-1">
+                      <Layers size={10} />{totalCh} ch
+                    </span>
+                  )}
+                  {dd?.routerVers && <span className="text-slate-600">fw {dd.routerVers}</span>}
                 </div>
-                {dd.isDante && !dd.isAES67 && (
+
+                {dd?.isDante && !dd.isAES67 && (
                   <div className="flex items-center gap-1 mt-1 text-[10px] text-yellow-500">
                     <AlertCircle size={10} />
                     <span>Enable AES67 on device to stream</span>
                   </div>
                 )}
               </div>
-              {hasChannels && (
+
+              {isExpandable && (
                 isExpanded
                   ? <ChevronDown size={14} className="text-slate-500 shrink-0" />
                   : <ChevronRight size={14} className="text-slate-500 shrink-0" />
               )}
             </button>
 
-            {/* Expanded: TX and RX channel names */}
-            {isExpanded && hasChannels && (
+            {/* Expanded content */}
+            {isExpanded && (
               <div className="border-t border-slate-700/60">
-                {/* TX channels */}
-                {dd.txChannelNames?.length > 0 && (
-                  <div className="px-3 py-2">
+
+                {/* PTP info (from SAP SDP) */}
+                {ptpGrandmaster && (
+                  <div className="px-3 py-2 bg-slate-900/50 flex items-center gap-2 text-xs">
+                    <Clock size={11} className="text-green-400 shrink-0" />
+                    <span className="text-slate-400">PTP</span>
+                    <span className="text-green-300 font-mono text-[10px]">{ptpGrandmaster}</span>
+                    {ptpVersion && <span className="text-slate-600">{ptpVersion}</span>}
+                    {ptpDomain  && <span className="text-slate-600">Dom {ptpDomain}</span>}
+                  </div>
+                )}
+
+                {/* TX channel names */}
+                {(dd?.txChannelNames?.length ?? 0) > 0 && (
+                  <div className="px-3 py-2 border-t border-slate-700/40">
                     <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-medium mb-1.5">
-                      <ArrowUpFromLine size={10} />
-                      TX Channels
+                      <ArrowUpFromLine size={10} /> TX Channels
                     </div>
                     <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
-                      {dd.txChannelNames.map(ch => (
+                      {dd!.txChannelNames.map(ch => (
                         <div key={ch.id} className="flex items-center gap-1.5 text-[10px] text-slate-300">
                           <span className="text-slate-600 w-5 text-right shrink-0">{ch.id}</span>
                           <span className="truncate">{ch.name || `ch${ch.id}`}</span>
@@ -179,15 +200,14 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onS
                   </div>
                 )}
 
-                {/* RX channels */}
-                {dd.rxChannelNames?.length > 0 && (
+                {/* RX channel names */}
+                {(dd?.rxChannelNames?.length ?? 0) > 0 && (
                   <div className="px-3 py-2 border-t border-slate-700/40">
                     <div className="flex items-center gap-1.5 text-[10px] text-sky-400 font-medium mb-1.5">
-                      <ArrowDownToLine size={10} />
-                      RX Channels
+                      <ArrowDownToLine size={10} /> RX Channels
                     </div>
                     <div className="space-y-0.5">
-                      {dd.rxChannelNames.map(ch => (
+                      {dd!.rxChannelNames.map(ch => (
                         <div key={ch.id} className="flex items-center gap-1.5 text-[10px]">
                           <span className="text-slate-600 w-5 text-right shrink-0">{ch.id}</span>
                           <span className="text-slate-300 truncate">{ch.name || `ch${ch.id}`}</span>
@@ -204,117 +224,35 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onS
                     </div>
                   </div>
                 )}
-              </div>
-            )}
-          </div>
-        );
-      })}
 
-      {/* SAP-based devices */}
-      {devices.map((device) => {
-        const isExpanded = expandedDevices.has(device.ip);
-        
-        return (
-          <div
-            key={device.ip}
-            className="bg-slate-800 rounded-lg overflow-hidden"
-          >
-            {/* Device Header */}
-            <button
-              onClick={() => toggleDevice(device.ip)}
-              className="w-full flex items-center gap-3 p-3 hover:bg-slate-700/50 transition-colors text-left"
-            >
-              <Server size={18} className="text-blue-400 shrink-0" />
-              
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-sm text-white truncate">
-                    {device.ip}
-                  </span>
-                  {device.tool && (
-                    <span className="text-xs text-slate-400 truncate">
-                      ({device.tool})
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-3 text-xs text-slate-400 mt-0.5">
-                  <span className="flex items-center gap-1">
-                    <Radio size={10} />
-                    {device.streamCount} {t.streams || 'streams'}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Layers size={10} />
-                    {device.channelCount} ch
-                  </span>
-                </div>
-              </div>
-
-              {isExpanded ? (
-                <ChevronDown size={16} className="text-slate-400" />
-              ) : (
-                <ChevronRight size={16} className="text-slate-400" />
-              )}
-            </button>
-
-            {/* Expanded Device Info */}
-            {isExpanded && (
-              <div className="border-t border-slate-700">
-                {/* PTP Info */}
-                {device.ptpGrandmaster && (
-                  <div className="px-3 py-2 bg-slate-900/50">
-                    <div className="flex items-center gap-2 text-xs">
-                      <Clock size={12} className="text-green-400" />
-                      <span className="text-slate-400">PTP:</span>
-                      <span className="text-green-300 font-mono text-[10px]">
-                        {device.ptpGrandmaster}
-                      </span>
-                    </div>
-                    <div className="flex gap-4 mt-1 text-[10px] text-slate-500 ml-5">
-                      {device.ptpVersion && (
-                        <span>{device.ptpVersion}</span>
-                      )}
-                      {device.ptpDomain && (
-                        <span>Domain: {device.ptpDomain}</span>
-                      )}
-                    </div>
+                {/* SAP streams list */}
+                {devStreams.length > 0 && (
+                  <div className="divide-y divide-slate-700/50 border-t border-slate-700/40">
+                    {devStreams.map(stream => (
+                      <div
+                        key={stream.id}
+                        onClick={() => onStreamClick?.(stream)}
+                        className="px-3 py-2 hover:bg-slate-700/30 cursor-pointer transition-colors"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-slate-300 truncate">{stream.name}</span>
+                          <div className="flex items-center gap-1 text-[10px]">
+                            <span className="bg-slate-700 px-1.5 py-0.5 rounded text-slate-300">{stream.codec}</span>
+                            <span className="bg-slate-700 px-1.5 py-0.5 rounded text-slate-300">{stream.channels}ch</span>
+                            {stream.redundant && (
+                              <span className="bg-orange-900/50 px-1.5 py-0.5 rounded text-orange-300">ST2022-7</span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          {stream.mcast}:{stream.port}
+                          {stream.info && <span className="ml-2 text-slate-600">• {stream.info}</span>}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
 
-                {/* Streams List */}
-                <div className="divide-y divide-slate-700/50">
-                  {device.streams.map((stream) => (
-                    <div
-                      key={stream.id}
-                      onClick={() => onStreamClick?.(stream)}
-                      className="px-3 py-2 hover:bg-slate-700/30 cursor-pointer transition-colors"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-slate-300 truncate">
-                          {stream.name}
-                        </span>
-                        <div className="flex items-center gap-1 text-[10px]">
-                          <span className="bg-slate-700 px-1.5 py-0.5 rounded text-slate-300">
-                            {stream.codec}
-                          </span>
-                          <span className="bg-slate-700 px-1.5 py-0.5 rounded text-slate-300">
-                            {stream.channels}ch
-                          </span>
-                          {stream.redundant && (
-                            <span className="bg-orange-900/50 px-1.5 py-0.5 rounded text-orange-300">
-                              ST2022-7
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="text-[10px] text-slate-500 mt-0.5">
-                        {stream.mcast}:{stream.port}
-                        {stream.info && (
-                          <span className="ml-2 text-slate-600">• {stream.info}</span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
               </div>
             )}
           </div>
