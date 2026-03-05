@@ -32,26 +32,47 @@ const SERVICES = [
  * @param {Function} callback (ip: string|null) => void
  */
 function resolveHost(host, callback) {
-  const proc = spawn('dns-sd', ['-G', 'v4', host], { windowsHide: true });
-  let resolved = false;
+  const dns = require('dns');
+  // Strip trailing dot if present (dns.lookup doesn't want it)
+  const hostname = host.endsWith('.') ? host.slice(0, -1) : host;
 
-  const timer = setTimeout(() => {
-    if (!resolved) { resolved = true; proc.kill(); callback(null); }
-  }, 3000);
-
-  proc.stdout.on('data', (data) => {
-    if (resolved) return;
-    const match = data.toString().match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
-    if (match) {
-      resolved = true;
-      clearTimeout(timer);
-      proc.kill();
-      callback(match[1]);
+  // Primary: Node.js dns.lookup() — uses Windows mDNS/Bonjour stack natively
+  dns.lookup(hostname, { family: 4 }, (err, address) => {
+    if (!err && address) {
+      flog(`resolveHost[${hostname}] dns.lookup => ${address}`);
+      callback(address);
+      return;
     }
-  });
+    flog(`resolveHost[${hostname}] dns.lookup failed (${err && err.code}), trying dns-sd -G`);
 
-  proc.on('close', () => { if (!resolved) { resolved = true; callback(null); } });
-  proc.stderr.on('data', () => {});
+    // Fallback: dns-sd -G v4
+    const proc = spawn('dns-sd', ['-G', 'v4', host], { windowsHide: true });
+    let resolved = false;
+
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        proc.kill();
+        flog(`resolveHost[${hostname}] dns-sd -G timeout`);
+        callback(null);
+      }
+    }, 3000);
+
+    proc.stdout.on('data', (data) => {
+      if (resolved) return;
+      const match = data.toString().match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+      if (match) {
+        resolved = true;
+        clearTimeout(timer);
+        proc.kill();
+        flog(`resolveHost[${hostname}] dns-sd -G => ${match[1]}`);
+        callback(match[1]);
+      }
+    });
+
+    proc.on('close', () => { if (!resolved) { resolved = true; callback(null); } });
+    proc.stderr.on('data', () => {});
+  });
 }
 
 /**
@@ -92,18 +113,24 @@ function lookupService(name, serviceType, family, onUp) {
       }
 
       // Line 2 (immediately after): TXT key=value pairs
-      // e.g. " arcp_vers=2.8.9 mf=Powersoft model=X router_info=Audinate\ DCM"
+      // e.g. " arcp_vers=2.8.9 mf=Powersft router_info=Audinate DCM model=Ultra"
+      // Values may contain spaces (no quoting), so we parse key= boundaries greedily.
       if (pendingHost && line.trim() && !line.match(/^\s*Lookup/i)) {
         const txt = {};
-        // Split on whitespace but not escaped spaces (backslash-space)
-        const raw = line.trim().replace(/\\\s/g, '\u00A0'); // temporarily replace "\ " with NBSP
-        for (const kv of raw.split(/\s+/)) {
-          const eq = kv.indexOf('=');
-          if (eq > 0) {
-            const key = kv.slice(0, eq);
-            const val = kv.slice(eq + 1).replace(/\u00A0/g, ' '); // restore spaces
-            txt[key] = val;
-          }
+        // Find all key= positions, then extract value as text up to next key=
+        const str = line.trim();
+        const keyPositions = [];
+        const keyRe = /(?:^|\s)([\w-]+)=/g;
+        let m;
+        while ((m = keyRe.exec(str)) !== null) {
+          keyPositions.push({ key: m[1], valStart: m.index + m[0].length });
+        }
+        for (let i = 0; i < keyPositions.length; i++) {
+          const { key, valStart } = keyPositions[i];
+          const valEnd = i + 1 < keyPositions.length
+            ? keyPositions[i + 1].valStart - keyPositions[i + 1].key.length - 1
+            : str.length;
+          txt[key] = str.slice(valStart, valEnd).trim();
         }
 
         const host = pendingHost;
