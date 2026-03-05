@@ -18,7 +18,7 @@
 const SUPPORTED_CODECS = ['L16', 'L24'];
 
 // Sample rates allowed by AES67 (48kHz family + 44.1kHz family)
-const SUPPORTED_SAMPLE_RATES = [44100, 48000, 88200, 96000, 192000];
+const SUPPORTED_SAMPLE_RATES = [16000, 32000, 44100, 48000, 88200, 96000, 192000];
 
 // Maximum channels per AES67 stream (practical limit)
 const MAX_CHANNELS = 64;

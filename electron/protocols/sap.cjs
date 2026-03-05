@@ -95,4 +95,51 @@ function listen(interfaceAddress, onPacket, onError) {
   };
 }
 
-module.exports = { parsePacket, sessionId, listen, PORT, MULTICAST_ADDR };
+/**
+ * Build and send a SAP announcement packet for a raw SDP string.
+ * Uses the same socket as listen() if provided, otherwise creates a transient one.
+ *
+ * SAP announcement header (RFC 2974):
+ *   byte 0:    0x20 (V=1, no auth, no encryption, announce)
+ *   byte 1:    0x00 (auth data length = 0)
+ *   bytes 2-3: message ID hash (random, per philhartung: random per stream change)
+ *   bytes 4-7: originating source IP (4 bytes, big-endian)
+ *
+ * @param {string} rawSdp         Raw SDP string to announce
+ * @param {string} sourceIp       IP of this machine (inserted in header)
+ * @param {object} [sockOrNull]   Optional existing dgram socket to reuse
+ */
+function announce(rawSdp, sourceIp, sockOrNull) {
+  const header = Buffer.alloc(8);
+  const contentType = Buffer.from('application/sdp\0');
+  const ip = sourceIp.split('.').map(Number);
+
+  header.writeUInt8(0x20, 0);                         // V=1 announce
+  header.writeUInt8(0x00, 1);                         // auth len = 0
+  header.writeUInt16LE(Math.floor(Math.random() * 0xffff), 2); // msg ID hash
+  header.writeUInt8(ip[0], 4);
+  header.writeUInt8(ip[1], 5);
+  header.writeUInt8(ip[2], 6);
+  header.writeUInt8(ip[3], 7);
+
+  const body = Buffer.concat([header, contentType, Buffer.from(rawSdp)]);
+
+  const sendFn = (sock, owned) => {
+    sock.send(body, PORT, MULTICAST_ADDR, (err) => {
+      if (err) console.error('[SAP] Announce error:', err.message);
+      if (owned) try { sock.close(); } catch (_) {}
+    });
+  };
+
+  if (sockOrNull) {
+    sendFn(sockOrNull, false);
+  } else {
+    const sock = dgram.createSocket({ type: 'udp4' });
+    sock.bind(() => {
+      try { sock.setMulticastInterface(sourceIp); } catch (_) {}
+      sendFn(sock, true);
+    });
+  }
+}
+
+module.exports = { parsePacket, sessionId, listen, announce, PORT, MULTICAST_ADDR };

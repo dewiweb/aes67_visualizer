@@ -77,8 +77,10 @@ function handleSapMessage(message, rinfo) {
 
 /**
  * Add manual stream from SDP text
+ * @param {string}  rawSdp
+ * @param {boolean} [announce=false]  If true, re-announce on the network every 30s
  */
-function addManualStream(rawSdp) {
+function addManualStream(rawSdp, announce = false) {
   let sdp;
   
   try {
@@ -102,6 +104,7 @@ function addManualStream(rawSdp) {
   sdp.id = id;
   sdp.lastSeen = Date.now();
   sdp.manual = true;
+  sdp.announce = announce;
   sdp.sourceType = 'manual';
 
   sessions[id] = parseSdp(sdp);
@@ -233,8 +236,19 @@ function sendUpdate() {
   process.send({ type: 'streams', streams });
 }
 
-// Periodic update (prune + refresh)
-setInterval(sendUpdate, 30000);
+// Periodic prune (every 5s as per Digisynthetic reference)
+setInterval(sendUpdate, 5000);
+
+// Re-announce manual streams every 30s (per philhartung/aes67-monitor reference)
+setInterval(() => {
+  if (!currentInterface) return;
+  for (const id of Object.keys(sessions)) {
+    const s = sessions[id];
+    if (s.announce && s.raw && s.origin) {
+      sap.announce(s.raw, s.origin.address || currentInterface);
+    }
+  }
+}, 30000);
 
 // IPC message handler
 process.on('message', (msg) => {

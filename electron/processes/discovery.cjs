@@ -150,6 +150,28 @@ async function enrichWithArc(device) {
   devices.set(device.host, stored);
   console.log(`[ARC] ${stored.name} (${ip}): ${stored.txChannels ?? '?'}TX / ${stored.rxChannels ?? '?'}RX | model=${stored.model || '-'}`);
   scheduleUpdate();
+
+  // Fetch channel names (same as probeArcIp)
+  const txCount = result.txChannels || 0;
+  const rxCount = result.rxChannels || 0;
+  if (txCount > 0 || rxCount > 0) {
+    const [txChs, rxChs] = await Promise.all([
+      txCount > 0 ? arc.getTxChannels(ip, arcPort, txCount) : Promise.resolve([]),
+      rxCount > 0 ? arc.getRxChannels(ip, arcPort, rxCount) : Promise.resolve([]),
+    ]);
+    const s = devices.get(device.host);
+    if (s) {
+      if (txChs.length > 0) {
+        s.txChannelNames = txChs;
+        console.log(`[ARC] ${s.name} TX channels: ${txChs.slice(0, 4).map(c => c.name || `ch${c.id}`).join(', ')}${txChs.length > 4 ? '...' : ''}`);
+      }
+      if (rxChs.length > 0) {
+        s.rxChannelNames = rxChs;
+      }
+      devices.set(device.host, s);
+      scheduleUpdate();
+    }
+  }
 }
 
 // ─── RTSP enrichment ─────────────────────────────────────────────────────────
@@ -158,9 +180,7 @@ async function enrichWithRtsp(device, streamNames = []) {
   const ip = device.addresses.find(a => a.includes('.'));
   if (!ip) return;
 
-  // Use ravenna.cjs to build the ordered path candidates
-  const paths  = ravenna.buildRtspPaths(streamNames);
-  const port   = device.port || ravenna.RTSP_PORT;
+  const port = device.port || ravenna.RTSP_PORT;
   const result = await rtsp.describe(ip, port, streamNames, 5000);
   if (!result) return;
 
