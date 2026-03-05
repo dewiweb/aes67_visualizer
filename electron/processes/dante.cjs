@@ -122,9 +122,10 @@ function rtspRequest(socket, method, url, cseq, extraHeaders = '') {
 
 /**
  * Full RTSP DESCRIBE sequence: OPTIONS → DESCRIBE (with common RAVENNA paths)
+ * streamNames: known SAP stream names on this device, used for /by-name/ URLs
  * Returns raw SDP string or null
  */
-function rtspDescribe(ip, port, timeout = 4000) {
+function rtspDescribe(ip, port, streamNames = [], timeout = 4000) {
   return new Promise((resolve) => {
     const socket = new net.Socket();
     let settled = false;
@@ -179,15 +180,19 @@ function rtspDescribe(ip, port, timeout = 4000) {
         }
 
         // Step 2: DESCRIBE — RAVENNA standard paths + common fallbacks
+        // Prepend /by-name/<stream> for each known SAP stream name on this device
+        const byNamePaths = streamNames.map(n => `/by-name/${encodeURIComponent(n)}`);
+        const byIdPaths   = Array.from({ length: Math.max(streamNames.length, 4) }, (_, i) => `/by-id/${i + 1}`);
         const paths = [
+          ...byNamePaths,   // RAVENNA /by-name/<stream> — most specific, try first
           '/',
-          '/by-name/',      // RAVENNA standard: list all streams by name
+          '/by-name/',      // RAVENNA: list all streams (some devices support this)
+          ...byIdPaths,     // RAVENNA /by-id/1, /by-id/2, ...
           '/stream',
           '/streams',
           '/audio',
           '/ravenna',
           '/session',
-          '/by-id/1',       // RAVENNA: first stream by ID
         ];
 
         let cseq = 2;
@@ -550,15 +555,14 @@ function refresh() {
 }
 
 /**
- * Probe RTSP on an IP across common RAVENNA ports, forward any SDP found
+ * Probe RTSP on an IP across common RAVENNA ports, forward any SDP found.
+ * streamNames: SAP-discovered stream names on this IP, used for /by-name/ URLs.
  */
-async function probeRtspIp(ip) {
-  // Common RAVENNA/AES67 RTSP ports: Lawo=9010, standard=554, Merging=8554, QSC=9020
-  const RAVENNA_RTSP_PORTS = [9010, 554, 8554, 9020, 8000, 5000, 7272, 80, 443, 9030, 9040];
+async function probeRtspIp(ip, streamNames = []) {
+  const RAVENNA_RTSP_PORTS = [554, 9010, 8554, 9020, 8000, 5000, 7272];
   let connected = false;
 
   for (const port of RAVENNA_RTSP_PORTS) {
-    // First test TCP connection (fast)
     const reachable = await new Promise((resolve) => {
       const s = new net.Socket();
       s.setTimeout(1000);
@@ -571,14 +575,13 @@ async function probeRtspIp(ip) {
     connected = true;
     console.log(`[RTSP Probe] ${ip}:${port} TCP open - trying DESCRIBE`);
 
-    const sdp = await rtspDescribe(ip, port, 3000);
+    const sdp = await rtspDescribe(ip, port, streamNames, 5000);
     if (sdp) {
-      console.log(`[RTSP Probe] ${ip}:${port} → SDP found (${sdp.slice(0, 80).replace(/\n/g, ' ')})`);
+      console.log(`[RTSP Probe] ${ip}:${port} → SDP found`);
       process.send({ type: 'ravenna-sdp', name: ip, sdp, sourceIp: ip });
       return;
-    } else {
-      console.log(`[RTSP Probe] ${ip}:${port} TCP open but no SDP`);
     }
+    console.log(`[RTSP Probe] ${ip}:${port} TCP open but no SDP`);
   }
 
   if (!connected) {
@@ -601,7 +604,7 @@ process.on('message', (msg) => {
       refresh();
       break;
     case 'probe-rtsp':
-      probeRtspIp(msg.ip);
+      probeRtspIp(msg.ip, msg.streamNames || []);
       break;
   }
 });

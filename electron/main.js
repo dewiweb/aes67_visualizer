@@ -158,11 +158,18 @@ function initChildProcesses() {
       sendToRenderer('streams-update', sapStreams);
 
       // Probe new SAP source IPs via RTSP to discover all RAVENNA streams
+      // Group stream names by IP so probe can try /by-name/<stream> paths
+      const ipStreams = {};
       for (const stream of sapStreams) {
         const ip = stream.deviceIp || stream.sapSourceIp;
-        if (ip && !probedIps.has(ip) && danteProcess) {
+        if (!ip) continue;
+        if (!ipStreams[ip]) ipStreams[ip] = [];
+        if (stream.name) ipStreams[ip].push(stream.name);
+      }
+      for (const [ip, names] of Object.entries(ipStreams)) {
+        if (!probedIps.has(ip) && danteProcess) {
           probedIps.add(ip);
-          danteProcess.send({ type: 'probe-rtsp', ip });
+          danteProcess.send({ type: 'probe-rtsp', ip, streamNames: names });
         }
       }
     } else if (data.type === 'port-conflict') {
