@@ -1,0 +1,175 @@
+/**
+ * mDNS/DNS-SD discovery via dns-sd.exe (Apple Bonjour native, Windows)
+ * Browses for Dante, RAVENNA and AES67 service types.
+ * Uses dns-sd -B (browse), -L (lookup), -G (host → IP resolution).
+ */
+
+'use strict';
+
+const { spawn } = require('child_process');
+
+// mDNS service types and their protocol families
+const SERVICES = [
+  { type: '_netaudio-arc._udp', family: 'dante'   },
+  { type: '_netaudio-cmc._udp', family: 'dante'   },
+  { type: '_netaudio-dbc._udp', family: 'dante'   },
+  { type: '_ravenna._tcp',      family: 'ravenna'  },
+  { type: '_ravenna-session._tcp', family: 'ravenna' },
+  { type: '_aes67._udp',        family: 'aes67'    },
+];
+
+/**
+ * Resolve a .local hostname to IPv4 via dns-sd -G v4
+ * @param {string}   host     e.g. "device.local."
+ * @param {Function} callback (ip: string|null) => void
+ */
+function resolveHost(host, callback) {
+  const proc = spawn('dns-sd', ['-G', 'v4', host], { windowsHide: true });
+  let resolved = false;
+
+  const timer = setTimeout(() => {
+    if (!resolved) { resolved = true; proc.kill(); callback(null); }
+  }, 3000);
+
+  proc.stdout.on('data', (data) => {
+    if (resolved) return;
+    const match = data.toString().match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+    if (match) {
+      resolved = true;
+      clearTimeout(timer);
+      proc.kill();
+      callback(match[1]);
+    }
+  });
+
+  proc.on('close', () => { if (!resolved) { resolved = true; callback(null); } });
+  proc.stderr.on('data', () => {});
+}
+
+/**
+ * Resolve a service instance via dns-sd -L (lookup)
+ * Extracts host, port and TXT records, then resolves host to IP.
+ * Calls onUp({ name, type, host, addresses, port, txt, family }) on success.
+ *
+ * @param {string}   name        Service instance name
+ * @param {string}   serviceType Full service type e.g. "_netaudio-arc._udp"
+ * @param {string}   family      Protocol family
+ * @param {Function} onUp        Called with resolved service object
+ * @returns {ChildProcess}
+ */
+function lookupService(name, serviceType, family, onUp) {
+  const proc = spawn('dns-sd', ['-L', name, serviceType, 'local'], { windowsHide: true });
+  let buffer = '';
+  const timer = setTimeout(() => proc.kill(), 5000);
+
+  proc.stdout.on('data', (data) => {
+    buffer += data.toString();
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+
+    for (const line of lines) {
+      // "  <name> can be reached at <host>:<port> (interface N)"
+      const reachMatch = line.match(/can be reached at ([\w.-]+):?(\d+)/i);
+      if (!reachMatch) continue;
+
+      const host = reachMatch[1];
+      const port = parseInt(reachMatch[2]) || 0;
+
+      // Extract TXT key=value pairs from the rest of the line
+      const afterHost = line.slice(line.indexOf(reachMatch[0]) + reachMatch[0].length).trim();
+      const txt = {};
+      for (const kv of afterHost.replace(/\(.*?\)/g, '').trim().split(/\s+/)) {
+        const eq = kv.indexOf('=');
+        if (eq > 0) txt[kv.slice(0, eq)] = kv.slice(eq + 1);
+      }
+
+      clearTimeout(timer);
+      proc.kill();
+
+      resolveHost(host, (ip) => {
+        onUp({
+          name,
+          type:      serviceType,
+          host,
+          addresses: ip ? [ip] : [],
+          port,
+          txt,
+          family,
+        });
+      });
+    }
+  });
+
+  proc.on('close', () => { clearTimeout(timer); });
+  proc.stderr.on('data', () => {});
+  return proc;
+}
+
+/**
+ * Browse for all known service types and call onUp/onDown on changes.
+ *
+ * @param {{ onUp: Function, onDown: Function }} callbacks
+ * @returns {{ stop: Function }}  Handle to stop all processes
+ */
+function browse(callbacks) {
+  const { onUp, onDown } = callbacks;
+  const browseProcs  = [];
+  const lookupProcs  = [];
+
+  console.log('[mDNS] Starting discovery via dns-sd.exe...');
+
+  for (const svc of SERVICES) {
+    console.log(`[mDNS] Browsing ${svc.type}`);
+
+    const proc = spawn('dns-sd', ['-B', svc.type, 'local'], { windowsHide: true });
+    browseProcs.push(proc);
+
+    let buffer = '';
+
+    proc.stdout.on('data', (data) => {
+      buffer += data.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (line.startsWith('Add')) {
+          // "Add  2  5 local. _netaudio-arc._udp. Device\ Name"
+          const match = line.match(/^Add\s+\d+\s+\d+\s+\S+\s+\S+\s+(.+)$/);
+          if (match) {
+            const name = match[1].trim().replace(/\\ /g, ' ');
+            const lp = lookupService(name, svc.type, svc.family, onUp);
+            lookupProcs.push(lp);
+          }
+        } else if (line.startsWith('Rmv')) {
+          const match = line.match(/^Rmv\s+\d+\s+\d+\s+\S+\s+\S+\s+(.+)$/);
+          if (match && onDown) {
+            const name = match[1].trim().replace(/\\ /g, ' ');
+            onDown({ name, host: name });
+          }
+        }
+      }
+    });
+
+    proc.stderr.on('data', () => {});
+    proc.on('close', (code) => {
+      const idx = browseProcs.indexOf(proc);
+      if (idx >= 0) browseProcs.splice(idx, 1);
+      if (code !== null && code !== 0) {
+        console.warn(`[mDNS] dns-sd exited ${code} for ${svc.type}`);
+      }
+    });
+  }
+
+  return {
+    stop() {
+      for (const p of [...browseProcs, ...lookupProcs]) {
+        try { p.kill(); } catch (_) {}
+      }
+      browseProcs.length = 0;
+      lookupProcs.length = 0;
+      console.log('[mDNS] Stopped');
+    },
+  };
+}
+
+module.exports = { browse, SERVICES };

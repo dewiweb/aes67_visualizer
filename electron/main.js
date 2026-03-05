@@ -229,8 +229,8 @@ function initChildProcesses() {
     }
   });
 
-  // Dante Discovery Process (mDNS/DNS-SD)
-  danteProcess = fork(path.join(__dirname, 'processes/dante.cjs'));
+  // Network Audio Discovery Process (mDNS + ARC + RTSP)
+  danteProcess = fork(path.join(__dirname, 'processes/discovery.cjs'));
   
   danteProcess.on('message', (data) => {
     if (data.type === 'dante-devices') {
