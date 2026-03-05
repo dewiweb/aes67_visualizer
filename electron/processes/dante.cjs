@@ -147,46 +147,23 @@ function rtspDescribe(ip, port, streamNames = [], timeout = 4000) {
         const baseWithPort    = `rtsp://${ip}:${port}`;
         const baseWithoutPort = port === 554 ? `rtsp://${ip}` : baseWithPort;
 
-        // Step 1: OPTIONS — try without port first (Lawo), then with port
-        let optResp = null;
-        let base = baseWithoutPort;
-
-        // Try OPTIONS * first (RFC 2326 §10.1 - server-wide), then with URL
-        const optionsCandidates = [
-          ['*', baseWithoutPort],
-          [`${baseWithoutPort}/`, baseWithoutPort],
-          [`${baseWithPort}/`,    baseWithPort],
-        ];
-
-        for (const [optUrl, tryBase] of optionsCandidates) {
-          base = tryBase;
-          optResp = await Promise.race([
-            rtspRequest(socket, 'OPTIONS', optUrl, 1),
-            new Promise(r => setTimeout(() => r(null), 2000)),
-          ]);
-          if (!optResp) continue;
-          const st = optResp.headers.match(/^RTSP\/1\.0\s+(\d+)/);
-          console.log(`[RTSP] ${ip}:${port} OPTIONS ${optUrl} → ${st ? st[1] : '?'}`);
-          if (st && st[1] === '200') break;
-          optResp = null;
-        }
-
-        if (!optResp) return done(null);
-
-        const statusMatch = optResp.headers.match(/^RTSP\/1\.0\s+(\d+)/);
-        if (!statusMatch || statusMatch[1] !== '200') {
-          console.log(`[RTSP] ${ip}:${port} OPTIONS all failed`);
-          return done(null);
-        }
+        // Step 1: OPTIONS probe (informational only — some Lawo devices return 404/400 on OPTIONS)
+        // We do NOT abort if OPTIONS fails; proceed directly to DESCRIBE anyway.
+        const optResp = await Promise.race([
+          rtspRequest(socket, 'OPTIONS', '*', 1),
+          new Promise(r => setTimeout(() => r(null), 1500)),
+        ]);
+        const optStatus = optResp?.headers.match(/^RTSP\/1\.0\s+(\d+)/)?.[1];
+        if (optStatus) console.log(`[RTSP] ${ip}:${port} OPTIONS * → ${optStatus}`);
 
         // Step 2: DESCRIBE — RAVENNA standard paths + common fallbacks
-        // Prepend /by-name/<stream> for each known SAP stream name on this device
+        // /by-name/<stream> paths come first using SAP-known stream names
         const byNamePaths = streamNames.map(n => `/by-name/${encodeURIComponent(n)}`);
         const byIdPaths   = Array.from({ length: Math.max(streamNames.length, 4) }, (_, i) => `/by-id/${i + 1}`);
         const paths = [
           ...byNamePaths,   // RAVENNA /by-name/<stream> — most specific, try first
+          '/by-name/',      // RAVENNA: list all streams
           '/',
-          '/by-name/',      // RAVENNA: list all streams (some devices support this)
           ...byIdPaths,     // RAVENNA /by-id/1, /by-id/2, ...
           '/stream',
           '/streams',
