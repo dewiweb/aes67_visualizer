@@ -416,7 +416,15 @@ function bindSocket(port, onPacket, onError) {
   const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
 
   sock.on('error', (err) => {
-    console.error(`[PTP] Socket error port ${port}:`, err.message);
+    if (err.code === 'EACCES') {
+      console.error(
+        `[PTP] Permission denied on port ${port}. On Linux, run:\n` +
+        `  sudo setcap cap_net_bind_service=+eip /path/to/aes67-visualizer.AppImage\n` +
+        `  or: sudo sysctl -w net.ipv4.ip_unprivileged_port_start=319`
+      );
+    } else {
+      console.error(`[PTP] Socket error port ${port}:`, err.message);
+    }
     if (onError) onError(err);
   });
 

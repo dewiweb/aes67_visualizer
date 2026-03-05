@@ -1,17 +1,18 @@
 /**
- * mDNS/DNS-SD discovery via dns-sd.exe (Apple Bonjour native, Windows)
+ * mDNS/DNS-SD discovery — cross-platform
+ *
+ * Windows/macOS : uses dns-sd (Apple Bonjour)  — dns-sd -B / -L / -G
+ * Linux         : uses avahi-browse / avahi-resolve-host-name
+ *
  * Browses for Dante, RAVENNA and AES67 service types.
- * Uses dns-sd -B (browse), -L (lookup), -G (host → IP resolution).
  */
 
 'use strict';
 
-const { spawn } = require('child_process');
-const fs = require('fs');
-const LOG_FILE = require('os').tmpdir() + '/aes67_discovery.log';
-function flog(msg) {
-  try { fs.appendFileSync(LOG_FILE, new Date().toISOString().slice(11,23) + ' [mdns] ' + msg + '\n'); } catch(_) {}
-}
+const { spawn }    = require('child_process');
+const os           = require('os');
+const IS_LINUX     = os.platform() === 'linux';
+const IS_WINDOWS   = os.platform() === 'win32';
 
 // mDNS service types and their protocol families
 // Sources: network-audio-controller, Inferno (gitlab.com/lumifaza/inferno)
@@ -27,64 +28,85 @@ const SERVICES = [
 ];
 
 /**
- * Resolve a .local hostname to IPv4 via dns-sd -G v4
+ * Resolve a .local hostname to IPv4.
+ * Primary: Node.js dns.lookup() (works on Windows via Bonjour, Linux via nss-mdns/systemd-resolved)
+ * Fallback Windows: dns-sd -G v4
+ * Fallback Linux:   avahi-resolve-host-name -4
+ *
  * @param {string}   host     e.g. "device.local."
  * @param {Function} callback (ip: string|null) => void
  */
 function resolveHost(host, callback) {
   const dns = require('dns');
-  // Strip trailing dot if present (dns.lookup doesn't want it)
   const hostname = host.endsWith('.') ? host.slice(0, -1) : host;
 
-  // Primary: Node.js dns.lookup() — uses Windows mDNS/Bonjour stack natively
+  // Primary: Node.js dns.lookup()
   dns.lookup(hostname, { family: 4 }, (err, address) => {
     if (!err && address) {
-        callback(address);
+      callback(address);
       return;
     }
-    // dns.lookup failed, try dns-sd -G
 
-    // Fallback: dns-sd -G v4
-    const proc = spawn('dns-sd', ['-G', 'v4', host], { windowsHide: true });
-    let resolved = false;
-
+    // Fallback: platform-specific resolver
+    let proc, resolved = false;
     const timer = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        proc.kill();
-        flog(`resolveHost timeout: ${hostname}`);
-        callback(null);
-      }
+      if (!resolved) { resolved = true; try { proc.kill(); } catch(_){} callback(null); }
     }, 3000);
 
-    proc.stdout.on('data', (data) => {
+    const onIp = (ip) => {
       if (resolved) return;
-      const match = data.toString().match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
-      if (match) {
-        resolved = true;
-        clearTimeout(timer);
-        proc.kill();
-        callback(match[1]);
-      }
-    });
+      resolved = true;
+      clearTimeout(timer);
+      try { proc.kill(); } catch(_){}
+      callback(ip);
+    };
 
+    if (IS_LINUX) {
+      proc = spawn('avahi-resolve-host-name', ['-4', hostname]);
+      proc.stdout.on('data', (data) => {
+        // output: "hostname\t192.168.x.x"
+        const m = data.toString().match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+        if (m) onIp(m[1]);
+      });
+    } else {
+      proc = spawn('dns-sd', ['-G', 'v4', host], { windowsHide: true });
+      proc.stdout.on('data', (data) => {
+        const m = data.toString().match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+        if (m) onIp(m[1]);
+      });
+    }
+
+    proc.on('error', () => { if (!resolved) { resolved = true; clearTimeout(timer); callback(null); } });
     proc.on('close', () => { if (!resolved) { resolved = true; callback(null); } });
-    proc.stderr.on('data', () => {});
+    proc.stderr && proc.stderr.on('data', () => {});
   });
 }
 
 /**
- * Resolve a service instance via dns-sd -L (lookup)
- * Extracts host, port and TXT records, then resolves host to IP.
- * Calls onUp({ name, type, host, addresses, port, txt, family }) on success.
- *
- * @param {string}   name        Service instance name
- * @param {string}   serviceType Full service type e.g. "_netaudio-arc._udp"
- * @param {string}   family      Protocol family
- * @param {Function} onUp        Called with resolved service object
- * @returns {ChildProcess}
+ * Parse TXT key=value string (shared by dns-sd and avahi-browse output)
  */
-function lookupService(name, serviceType, family, onUp) {
+function parseTxtString(str) {
+  const txt = {};
+  const keyPositions = [];
+  const keyRe = /(?:^|\s)([\w-]+)=/g;
+  let m;
+  while ((m = keyRe.exec(str)) !== null) {
+    keyPositions.push({ key: m[1], valStart: m.index + m[0].length });
+  }
+  for (let i = 0; i < keyPositions.length; i++) {
+    const { key, valStart } = keyPositions[i];
+    const valEnd = i + 1 < keyPositions.length
+      ? keyPositions[i + 1].valStart - keyPositions[i + 1].key.length - 1
+      : str.length;
+    txt[key] = str.slice(valStart, valEnd).trim().replace(/\\(.)/g, '$1');
+  }
+  return txt;
+}
+
+/**
+ * Lookup via dns-sd -L (Windows/macOS)
+ */
+function lookupServiceDnsSd(name, serviceType, family, onUp) {
   const proc = spawn('dns-sd', ['-L', name, serviceType, 'local'], { windowsHide: true });
   let buffer = '';
   const timer = setTimeout(() => proc.kill(), 5000);
@@ -98,8 +120,7 @@ function lookupService(name, serviceType, family, onUp) {
     buffer = lines.pop();
 
     for (const rawLine of lines) {
-      const line = rawLine.replace(/\r/g, ''); // strip CR
-      // Line 1: "  <name> can be reached at <host>:<port> (interface N)"
+      const line = rawLine.replace(/\r/g, '');
       const reachMatch = line.match(/can be reached at ([\w.-]+):(\d+)/i);
       if (reachMatch) {
         pendingHost = reachMatch[1];
@@ -107,46 +128,16 @@ function lookupService(name, serviceType, family, onUp) {
         continue;
       }
 
-      // Line 2 (immediately after): TXT key=value pairs
-      // e.g. " arcp_vers=2.8.9 mf=Powersft router_info=Audinate DCM model=Ultra"
-      // Values may contain spaces (no quoting), so we parse key= boundaries greedily.
       if (pendingHost && line.trim() && !line.match(/^\s*Lookup/i)) {
-        const txt = {};
-        // Find all key= positions, then extract value as text up to next key=
-        const str = line.trim();
-        const keyPositions = [];
-        const keyRe = /(?:^|\s)([\w-]+)=/g;
-        let m;
-        while ((m = keyRe.exec(str)) !== null) {
-          keyPositions.push({ key: m[1], valStart: m.index + m[0].length });
-        }
-        for (let i = 0; i < keyPositions.length; i++) {
-          const { key, valStart } = keyPositions[i];
-          const valEnd = i + 1 < keyPositions.length
-            ? keyPositions[i + 1].valStart - keyPositions[i + 1].key.length - 1
-            : str.length;
-          // Strip backslash escapes (dns-sd uses "\ " for spaces, "\\" for backslash)
-          txt[key] = str.slice(valStart, valEnd).trim().replace(/\\(.)/g, '$1');
-        }
-
+        const txt  = parseTxtString(line.trim());
         const host = pendingHost;
         const port = pendingPort;
         pendingHost = null;
         pendingPort = 0;
-
         clearTimeout(timer);
         proc.kill();
-
         resolveHost(host, (ip) => {
-          onUp({
-            name,
-            type:      serviceType,
-            host,
-            addresses: ip ? [ip] : [],
-            port,
-            txt,
-            family,
-          });
+          onUp({ name, type: serviceType, host, addresses: ip ? [ip] : [], port, txt, family });
         });
       }
     }
@@ -154,8 +145,6 @@ function lookupService(name, serviceType, family, onUp) {
 
   proc.on('close', () => {
     clearTimeout(timer);
-    flog(`lookup[${name}] closed, pendingHost=${pendingHost}`);
-    // If we got a host but no TXT line came (e.g. device has no TXT records), still emit
     if (pendingHost) {
       const host = pendingHost;
       const port = pendingPort;
@@ -165,8 +154,69 @@ function lookupService(name, serviceType, family, onUp) {
       });
     }
   });
-  proc.stderr.on('data', () => {});
+  proc.stderr && proc.stderr.on('data', () => {});
+  proc.on('error', () => { clearTimeout(timer); });
   return proc;
+}
+
+/**
+ * Lookup via avahi-browse -r (Linux)
+ * avahi-browse -r outputs service info including resolved hostname and address.
+ */
+function lookupServiceAvahi(name, serviceType, family, onUp) {
+  // Use avahi-browse --resolve in parseable mode for a specific instance
+  // avahi-browse -r -p outputs lines like:
+  //   =;eth0;IPv4;Name;_type._proto;local;hostname.local;192.168.x.x;port;"txt"
+  const proc = spawn('avahi-browse', [
+    '--resolve', '--parsable', '--terminate', '--no-db-lookup',
+    serviceType,
+  ]);
+  const timer = setTimeout(() => proc.kill(), 6000);
+  let buffer = '';
+  let found = false;
+
+  proc.stdout.on('data', (data) => {
+    buffer += data.toString();
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+
+    for (const line of lines) {
+      // Resolved line: =;iface;IPv4;instanceName;type;domain;hostname;address;port;txt
+      const parts = line.split(';');
+      if (parts[0] !== '=' || parts[2] !== 'IPv4') continue;
+      const instanceName = parts[3];
+      if (instanceName !== name) continue;
+
+      const host    = parts[6];
+      const address = parts[7];
+      const port    = parseInt(parts[8]) || 0;
+      // TXT: "key=val" "key2=val2" ...
+      const rawTxt  = parts.slice(9).join(';');
+      const txt     = {};
+      const txtPairs = rawTxt.match(/"([^"]*)"/g) || [];
+      for (const pair of txtPairs) {
+        const kv = pair.slice(1, -1); // strip quotes
+        const eq = kv.indexOf('=');
+        if (eq > 0) txt[kv.slice(0, eq)] = kv.slice(eq + 1);
+      }
+
+      found = true;
+      clearTimeout(timer);
+      proc.kill();
+      onUp({ name, type: serviceType, host, addresses: address ? [address] : [], port, txt, family });
+      break;
+    }
+  });
+
+  proc.on('close', () => { clearTimeout(timer); });
+  proc.stderr && proc.stderr.on('data', () => {});
+  proc.on('error', () => { clearTimeout(timer); });
+  return proc;
+}
+
+function lookupService(name, serviceType, family, onUp) {
+  if (IS_LINUX) return lookupServiceAvahi(name, serviceType, family, onUp);
+  return lookupServiceDnsSd(name, serviceType, family, onUp);
 }
 
 /**
@@ -175,19 +225,81 @@ function lookupService(name, serviceType, family, onUp) {
  * @param {{ onUp: Function, onDown: Function }} callbacks
  * @returns {{ stop: Function }}  Handle to stop all processes
  */
-function browse(callbacks) {
+/**
+ * Browse using avahi-browse (Linux)
+ * avahi-browse -p outputs:
+ *   +;iface;IPv4;instanceName;type;domain   (add)
+ *   -;iface;IPv4;instanceName;type;domain   (remove)
+ */
+function browseAvahi(callbacks) {
+  const { onUp, onDown } = callbacks;
+  const browseProcs = [];
+  const lookupProcs = [];
+
+  console.log('[mDNS] Starting discovery via avahi-browse (Linux)...');
+
+  for (const svc of SERVICES) {
+    // avahi-browse only supports TCP/UDP types; skip unsupported
+    const proc = spawn('avahi-browse', [
+      '--parsable', '--no-db-lookup', svc.type,
+    ]);
+    browseProcs.push(proc);
+    let buffer = '';
+
+    proc.stdout.on('data', (data) => {
+      buffer += data.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        const parts = line.split(';');
+        if (parts.length < 5) continue;
+        const event        = parts[0]; // '+' or '-'
+        const instanceName = parts[3];
+        if (event === '+') {
+          const lp = lookupService(instanceName, svc.type, svc.family, onUp);
+          if (lp) lookupProcs.push(lp);
+        } else if (event === '-' && onDown) {
+          onDown({ name: instanceName, host: instanceName });
+        }
+      }
+    });
+
+    proc.stderr && proc.stderr.on('data', () => {});
+    proc.on('error', (err) => {
+      console.warn(`[mDNS] avahi-browse error for ${svc.type}: ${err.message}`);
+    });
+    proc.on('close', (code) => {
+      const idx = browseProcs.indexOf(proc);
+      if (idx >= 0) browseProcs.splice(idx, 1);
+    });
+  }
+
+  return {
+    stop() {
+      for (const p of [...browseProcs, ...lookupProcs]) {
+        try { p.kill(); } catch (_) {}
+      }
+      browseProcs.length = 0;
+      lookupProcs.length = 0;
+      console.log('[mDNS] Stopped');
+    },
+  };
+}
+
+/**
+ * Browse using dns-sd (Windows / macOS)
+ */
+function browseDnsSd(callbacks) {
   const { onUp, onDown } = callbacks;
   const browseProcs  = [];
   const lookupProcs  = [];
 
-  console.log('[mDNS] Starting discovery via dns-sd.exe...');
+  console.log('[mDNS] Starting discovery via dns-sd...');
 
   for (const svc of SERVICES) {
-    console.log(`[mDNS] Browsing ${svc.type}`);
-
     const proc = spawn('dns-sd', ['-B', svc.type, 'local'], { windowsHide: true });
     browseProcs.push(proc);
-
     let buffer = '';
 
     proc.stdout.on('data', (data) => {
@@ -196,15 +308,12 @@ function browse(callbacks) {
       buffer = lines.pop();
 
       for (const rawLine of lines) {
-        const line = rawLine.replace(/\r/g, '').trim(); // strip CRLF
-        // dns-sd output: "HH:MM:SS.mmm  Add  flags if domain  type  name"
-        // or just:       "Add  flags if domain  type  name" (no timestamp)
+        const line = rawLine.replace(/\r/g, '').trim();
         const addMatch = line.match(/\bAdd\s+\d+\s+\d+\s+\S+\s+\S+\.\s+(.+)$/);
         if (addMatch) {
           const name = addMatch[1].trim().replace(/\\ /g, ' ');
-          flog(`Add ${svc.type}: ${name}`);
           const lp = lookupService(name, svc.type, svc.family, onUp);
-          lookupProcs.push(lp);
+          if (lp) lookupProcs.push(lp);
         } else {
           const rmvMatch = line.match(/\bRmv\s+\d+\s+\d+\s+\S+\s+\S+\.\s+(.+)$/);
           if (rmvMatch && onDown) {
@@ -215,7 +324,10 @@ function browse(callbacks) {
       }
     });
 
-    proc.stderr.on('data', () => {});
+    proc.stderr && proc.stderr.on('data', () => {});
+    proc.on('error', (err) => {
+      console.warn(`[mDNS] dns-sd error for ${svc.type}: ${err.message}`);
+    });
     proc.on('close', (code) => {
       const idx = browseProcs.indexOf(proc);
       if (idx >= 0) browseProcs.splice(idx, 1);
@@ -235,6 +347,11 @@ function browse(callbacks) {
       console.log('[mDNS] Stopped');
     },
   };
+}
+
+function browse(callbacks) {
+  if (IS_LINUX) return browseAvahi(callbacks);
+  return browseDnsSd(callbacks);
 }
 
 module.exports = { browse, SERVICES };

@@ -33,7 +33,10 @@ jobs:
             python3 \
             rpm \
             libopus-dev \
-            libsndfile1-dev
+            libsndfile1-dev \
+            avahi-utils \
+            avahi-daemon \
+            libavahi-client-dev
 
       - name: Install npm dependencies
         run: npm ci
