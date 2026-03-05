@@ -93,15 +93,45 @@ function parseDevice(service) {
 }
 
 /**
- * Fetch SDP from a RAVENNA device via RTSP DESCRIBE (RFC 2326)
- * Returns the raw SDP string or null on failure
+ * Send one RTSP request and collect the full response (headers + body)
  */
-function rtspDescribe(ip, port, timeout = 3000) {
+function rtspRequest(socket, method, url, cseq, extraHeaders = '') {
+  return new Promise((resolve) => {
+    let buffer = '';
+    const onData = (data) => {
+      buffer += data.toString();
+      const headerEnd = buffer.indexOf('\r\n\r\n');
+      if (headerEnd === -1) return;
+
+      const headers = buffer.slice(0, headerEnd);
+      const body    = buffer.slice(headerEnd + 4);
+      const clMatch = headers.match(/Content-Length:\s*(\d+)/i);
+      const contentLength = clMatch ? parseInt(clMatch[1]) : 0;
+
+      if (contentLength === 0 || Buffer.byteLength(body) >= contentLength) {
+        socket.removeListener('data', onData);
+        resolve({ headers, body: body.slice(0, contentLength || body.length) });
+      }
+    };
+    socket.on('data', onData);
+    socket.write(
+      `${method} ${url} RTSP/1.0\r\nCSeq: ${cseq}\r\nUser-Agent: AES67-Visualizer\r\n${extraHeaders}\r\n`
+    );
+  });
+}
+
+/**
+ * Full RTSP DESCRIBE sequence: OPTIONS → DESCRIBE (with common RAVENNA paths)
+ * Returns raw SDP string or null
+ */
+function rtspDescribe(ip, port, timeout = 4000) {
   return new Promise((resolve) => {
     const socket = new net.Socket();
-    let buffer = '';
+    let settled = false;
 
     const done = (result) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       socket.destroy();
       resolve(result);
@@ -109,48 +139,49 @@ function rtspDescribe(ip, port, timeout = 3000) {
 
     const timer = setTimeout(() => done(null), timeout);
 
-    socket.connect(port, ip, () => {
-      socket.write([
-        `DESCRIBE rtsp://${ip}:${port}/ RTSP/1.0`,
-        'CSeq: 1',
-        'Accept: application/sdp',
-        '',
-        '',
-      ].join('\r\n'));
-    });
+    socket.connect(port, ip, async () => {
+      try {
+        const base = `rtsp://${ip}:${port}`;
 
-    socket.on('data', (data) => {
-      buffer += data.toString();
+        // Step 1: OPTIONS to check RTSP support and get Public methods
+        const optResp = await Promise.race([
+          rtspRequest(socket, 'OPTIONS', `${base}/`, 1),
+          new Promise(r => setTimeout(() => r(null), 2000)),
+        ]);
 
-      // Wait until we have the full headers (double CRLF)
-      const headerEnd = buffer.indexOf('\r\n\r\n');
-      if (headerEnd === -1) return;
+        if (!optResp) return done(null);
 
-      const headers = buffer.slice(0, headerEnd);
-      const body = buffer.slice(headerEnd + 4);
+        const statusMatch = optResp.headers.match(/^RTSP\/1\.0\s+(\d+)/);
+        const status = statusMatch ? parseInt(statusMatch[1]) : 0;
+        if (status !== 200) {
+          console.log(`[RTSP] ${ip}:${port} OPTIONS ${status} — ${optResp.headers.slice(0,120).replace(/\r\n/g,' | ')}`);
+          return done(null);
+        }
 
-      // Check RTSP status line
-      const statusMatch = headers.match(/^RTSP\/1\.0\s+(\d+)/);
-      if (statusMatch && statusMatch[1] !== '200') {
-        // Non-200 response (e.g. 401, 404) — no SDP
-        return done(null);
+        // Step 2: DESCRIBE on common RAVENNA paths
+        const paths = ['/', '/stream', '/streams', '/audio', '/ravenna', '/session'];
+        for (const path of paths) {
+          const desc = await Promise.race([
+            rtspRequest(socket, 'DESCRIBE', `${base}${path}`, 2 + paths.indexOf(path), 'Accept: application/sdp\r\n'),
+            new Promise(r => setTimeout(() => r(null), 2000)),
+          ]);
+
+          if (!desc) continue;
+
+          const dStatus = desc.headers.match(/^RTSP\/1\.0\s+(\d+)/);
+          if (dStatus && dStatus[1] === '200' && desc.body.trim().startsWith('v=')) {
+            return done(desc.body.trim());
+          }
+          if (dStatus && dStatus[1] !== '404') {
+            // Log non-404 failures (e.g. 401, 400) for the first path only
+            if (path === '/') console.log(`[RTSP] ${ip}:${port}${path} DESCRIBE ${dStatus[1]}`);
+          }
+        }
+
+        done(null);
+      } catch (e) {
+        done(null);
       }
-
-      // Get Content-Length to know when body is complete
-      const clMatch = headers.match(/Content-Length:\s*(\d+)/i);
-      const contentLength = clMatch ? parseInt(clMatch[1]) : 0;
-
-      if (contentLength === 0) {
-        // No body expected — some devices send SDP without Content-Length
-        const sdp = body.trim();
-        return done(sdp.startsWith('v=') ? sdp : null);
-      }
-
-      if (Buffer.byteLength(body) >= contentLength) {
-        const sdp = body.slice(0, contentLength).trim();
-        return done(sdp.startsWith('v=') ? sdp : null);
-      }
-      // else: wait for more data (handled by next 'data' event)
     });
 
     socket.on('error', () => done(null));
