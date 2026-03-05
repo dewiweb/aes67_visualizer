@@ -158,8 +158,8 @@ start_code(2=0x27FF) + total_length(2) + seqnum(2) + opcode(2) + result_code(2) 
 
 | Project | Language | What it provided |
 |---------|----------|-----------------|
-| [philhartung/aes67-monitor](https://github.com/philhartung/aes67-monitor) | JS | SAP/SDP parsing architecture, audio engine |
-| [Digisynthetic/aes67-stream-monitor](https://github.com/Digisynthetic/aes67-stream-monitor) | JS | UI/UX inspiration, i18n |
+| [philhartung/aes67-monitor](https://github.com/philhartung/aes67-monitor) | JS/Electron | SAP socket (`socket.bind(9875)`), SAP announcement (`announceStream` → `239.255.255.255:9875`), SAP session ID from `o=` line (MD5 hash), stream timeout 5min, `sdp-transform` library, RTP playback via `audify`/RtAudio, jitter buffer, multicast bind `client.bind(5004)` |
+| [Digisynthetic/aes67-stream-monitor](https://github.com/Digisynthetic/aes67-stream-monitor) | JS/Electron | SAP `SapDiscovery` class (EventEmitter), stream timeout 120s, level polling via UDP `getVolumeDbBatchIn` JSON on port 8999, RMS level calculation over L24 samples, Monitoring Wall UI, i18n |
 | [chris-ritsen/network-audio-controller](https://github.com/chris-ritsen/network-audio-controller) | Python | Dante ARC protocol opcodes, packet format, const.py |
 | [teodly/inferno](https://github.com/teodly/inferno) (mirror of [lumifaza/inferno](https://gitlab.com/lumifaza/inferno)) | Rust | ARC packet header layout, pagination (`0x8112`), flows control port 4455, mDNS service types `_netaudio-chan`, `_netaudio-bund` |
 | [soundondigital/ravennakit](https://github.com/soundondigital/ravennakit) | C++ | RAVENNA RTSP paths (`/by-name/`, `/by-id/`), RTP port 5004, PTPv2 profiles, DNS-SD service types |
