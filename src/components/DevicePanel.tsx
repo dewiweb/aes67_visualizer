@@ -87,19 +87,19 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onS
 
       {/* Dante/RAVENNA devices discovered via ARC probe or mDNS */}
       {danteDevices.map((dd) => {
-        const ip         = dd.addresses.find(a => a.includes('.')) || dd.host;
+        const ip         = dd.ip || dd.addresses.find(a => a.includes('.')) || dd.host || '';
         const sapDevice  = devices.find(d => d.ip === ip);
         const hasChannels = (dd.txChannelNames?.length > 0) || (dd.rxChannelNames?.length > 0);
-        const isExpanded = expandedDanteDevs.has(dd.host);
+        const isExpanded = expandedDanteDevs.has(ip);
 
         return (
           <div
-            key={dd.host}
+            key={ip}
             className="bg-slate-800 rounded-lg overflow-hidden border border-purple-900/40"
           >
             {/* Header — clickable if channel names available */}
             <button
-              onClick={() => hasChannels && toggleDanteDevice(dd.host)}
+              onClick={() => hasChannels && toggleDanteDevice(ip)}
               className={`w-full flex items-center gap-3 p-3 text-left ${
                 hasChannels ? 'hover:bg-slate-700/50 cursor-pointer' : 'cursor-default'
               } transition-colors`}
@@ -124,7 +124,11 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onS
                 </div>
                 <div className="flex items-center gap-3 text-xs text-slate-400 mt-0.5 flex-wrap">
                   <span className="font-mono text-slate-500">{ip}</span>
+                  {dd.manufacturer && <span className="text-slate-400">{dd.manufacturer}</span>}
                   {dd.model && <span className="text-slate-500">{dd.model}</span>}
+                  {dd.software && <span className="text-slate-600 italic">{dd.software}</span>}
+                </div>
+                <div className="flex items-center gap-3 text-xs text-slate-500 mt-0.5 flex-wrap">
                   {dd.txChannels != null && (
                     <span className="flex items-center gap-1 text-emerald-400">
                       <ArrowUpFromLine size={10} />
@@ -138,8 +142,9 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onS
                     </span>
                   )}
                   {dd.sampleRate && <span>{dd.sampleRate / 1000}kHz</span>}
+                  {dd.routerVers && <span className="text-slate-600">fw {dd.routerVers}</span>}
                 </div>
-                {dd.requiresAES67 && (
+                {dd.isDante && !dd.isAES67 && (
                   <div className="flex items-center gap-1 mt-1 text-[10px] text-yellow-500">
                     <AlertCircle size={10} />
                     <span>Enable AES67 on device to stream</span>

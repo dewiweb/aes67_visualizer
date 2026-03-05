@@ -62,14 +62,17 @@ export interface Device {
 }
 
 export interface DanteDevice {
-  host: string;
+  /** Primary IPv4 address — registry key */
+  ip: string;
+  /** mDNS hostname e.g. "device.local." */
+  host: string | null;
   name: string;
   addresses: string[];
-  port: number;
   protocolFamily: 'dante' | 'ravenna' | 'aes67' | 'unknown';
-  manufacturer: string;
+  manufacturer: string | null;
   model: string | null;
-  sampleRate: number;
+  software: string | null;
+  sampleRate: number | null;
   txChannels: number | null;
   rxChannels: number | null;
   txChannelNames: { id: number; name: string }[];
@@ -77,8 +80,17 @@ export interface DanteDevice {
   isDante: boolean;
   isAES67: boolean;
   isRAVENNA: boolean;
-  software: string | null;
-  requiresAES67: boolean;
+  /** Dante firmware version from TXT arcp_vers */
+  arcpVers: string | null;
+  /** Dante router firmware version */
+  routerVers: string | null;
+  /** Dante router_info TXT field */
+  routerInfo: string | null;
+  /** PTP grandmaster identity */
+  ptpGrandmaster: string | null;
+  /** Which discovery sources contributed data */
+  discoveredBy: string[];
+  lastSeen: number;
 }
 
 export interface PtpStatus {

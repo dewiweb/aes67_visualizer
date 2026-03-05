@@ -2,8 +2,32 @@
  * Network Audio Discovery Child Process
  * Orchestrates mDNS, Dante ARC and RAVENNA RTSP discovery.
  *
- * Device state is maintained here and sent to the main process
- * via IPC messages of type 'dante-devices'.
+ * All discovered devices are merged into a single registry keyed by IP address.
+ * Each source (mDNS service types, ARC, RTSP, SAP probe) contributes fields
+ * to a unified device model — later data never overwrites richer existing data.
+ *
+ * Unified device model fields:
+ *   ip            {string}   Primary IPv4 address (registry key)
+ *   host          {string}   mDNS hostname (e.g. "device.local.")
+ *   name          {string}   Human-readable device name
+ *   manufacturer  {string}   e.g. "Powersoft", "Amadeus (Holophonix)", "Audinate"
+ *   model         {string}   Device model string
+ *   software      {string}   Firmware/software label
+ *   protocolFamily {string}  'dante' | 'ravenna' | 'aes67' | 'unknown'
+ *   isDante       {boolean}
+ *   isAES67       {boolean}
+ *   isRAVENNA     {boolean}
+ *   sampleRate    {number}   Hz
+ *   txChannels    {number|null}
+ *   rxChannels    {number|null}
+ *   txChannelNames [{id,name}]
+ *   rxChannelNames [{id,name,txChannelName,txHost,subscribed}]
+ *   arcpVers      {string}   Dante ARC protocol version
+ *   routerVers    {string}   Dante firmware version
+ *   routerInfo    {string}   Dante router_info TXT field
+ *   ptpGrandmaster {string}  From mDNS TXT (RAVENNA) or SAP SDP
+ *   discoveredBy  {string[]} Sources that contributed info
+ *   lastSeen      {number}   Date.now() of most recent update
  *
  * Incoming IPC messages:
  *   { type: 'init' }               — start mDNS browsing
@@ -20,71 +44,191 @@ const rtsp    = require('../protocols/rtsp.cjs');
 const mdns    = require('../protocols/mdns.cjs');
 const ravenna = require('../protocols/ravenna.cjs');
 
-// Device registry: host/ip → device info
+// Device registry: IP → unified device object
 const devices   = new Map();
 let updateTimer = null;
 let mdnsHandle  = null;
 
-// ─── Device parsing ──────────────────────────────────────────────────────────
+// ─── Unified device model helpers ────────────────────────────────────────────
 
 /**
- * Build a normalised device object from an mDNS service record
+ * Return the first non-null/non-empty value from the list.
+ */
+function pick(...values) {
+  for (const v of values) {
+    if (v !== null && v !== undefined && v !== '') return v;
+  }
+  return null;
+}
+
+/**
+ * Merge a patch into an existing device record.
+ * Rules:
+ *  - Scalar fields: keep existing if non-null, otherwise take patch value
+ *  - Boolean flags: OR (once true, stays true)
+ *  - Arrays (addresses, channelNames): keep longest/non-empty
+ *  - discoveredBy: union of sources
+ */
+function mergeDevice(existing, patch) {
+  const merged = { ...existing };
+
+  // Scalar fields — only fill in if currently empty
+  const scalars = ['name', 'manufacturer', 'model', 'software',
+                   'arcpVers', 'routerVers', 'routerInfo', 'ptpGrandmaster'];
+  for (const k of scalars) {
+    if (!merged[k] && patch[k]) merged[k] = patch[k];
+  }
+
+  // protocolFamily: prefer more specific (ravenna/aes67 > dante > unknown)
+  const familyRank = { ravenna: 3, aes67: 3, dante: 2, unknown: 1 };
+  if ((familyRank[patch.protocolFamily] || 0) > (familyRank[merged.protocolFamily] || 0)) {
+    merged.protocolFamily = patch.protocolFamily;
+  }
+
+  // Numeric fields — take patch if existing is null/0
+  if (merged.sampleRate == null && patch.sampleRate) merged.sampleRate = patch.sampleRate;
+  if (merged.txChannels == null && patch.txChannels != null) merged.txChannels = patch.txChannels;
+  if (merged.rxChannels == null && patch.rxChannels != null) merged.rxChannels = patch.rxChannels;
+
+  // Boolean flags — OR
+  if (patch.isDante)   merged.isDante   = true;
+  if (patch.isAES67)   merged.isAES67   = true;
+  if (patch.isRAVENNA) merged.isRAVENNA = true;
+
+  // Addresses — keep union
+  const addrSet = new Set([...(merged.addresses || []), ...(patch.addresses || [])]);
+  merged.addresses = [...addrSet].filter(Boolean);
+
+  // Channel names — keep if incoming has more detail
+  if ((patch.txChannelNames || []).length > (merged.txChannelNames || []).length) {
+    merged.txChannelNames = patch.txChannelNames;
+  }
+  if ((patch.rxChannelNames || []).length > (merged.rxChannelNames || []).length) {
+    merged.rxChannelNames = patch.rxChannelNames;
+  }
+
+  // host: keep first non-dot value
+  if (!merged.host || merged.host === '.') merged.host = patch.host || merged.host;
+
+  // discoveredBy: union
+  const bySet = new Set([...(merged.discoveredBy || []), ...(patch.discoveredBy || [])]);
+  merged.discoveredBy = [...bySet];
+
+  merged.lastSeen = Date.now();
+  return merged;
+}
+
+/**
+ * Upsert a device patch into the registry by IP.
+ * Returns the merged device.
+ */
+function upsert(ip, patch) {
+  if (!ip) return null;
+  const existing = devices.get(ip);
+  const result   = existing ? mergeDevice(existing, patch) : { ...emptyDevice(ip), ...patch, lastSeen: Date.now() };
+  devices.set(ip, result);
+  return result;
+}
+
+/**
+ * Create an empty device skeleton for a given IP.
+ */
+function emptyDevice(ip) {
+  return {
+    ip,
+    host:           null,
+    name:           ip,
+    manufacturer:   null,
+    model:          null,
+    software:       null,
+    protocolFamily: 'unknown',
+    isDante:        false,
+    isAES67:        false,
+    isRAVENNA:      false,
+    sampleRate:     null,
+    txChannels:     null,
+    rxChannels:     null,
+    txChannelNames: [],
+    rxChannelNames: [],
+    arcpVers:       null,
+    routerVers:     null,
+    routerInfo:     null,
+    ptpGrandmaster: null,
+    addresses:      [ip],
+    discoveredBy:   [],
+    lastSeen:       Date.now(),
+  };
+}
+
+// ─── Device parsing from mDNS service records ─────────────────────────────────
+
+/**
+ * Parse an mDNS service record into a device patch.
  */
 function parseService(service) {
   const txt    = service.txt || {};
   const family = service.family || 'unknown';
+  const ip     = (service.addresses || []).find(a => /^\d+\./.test(a)) || null;
 
   const base = {
-    name:           service.name,
-    host:           service.host,
+    ip,
+    host:           service.host || null,
     addresses:      service.addresses || [],
-    port:           service.port,
     protocolFamily: family,
+    discoveredBy:   [`mdns:${service.type || family}`],
   };
 
   if (family === 'dante') {
-    // Normalise manufacturer field — some firmwares have typos
+    // Normalise manufacturer — some firmwares have typos
     const rawMf = txt.mf || txt.manufacturer || '';
-    const manufacturer = rawMf
-      .replace(/Powersft/i, 'Powersoft')
-      .replace(/Amadeus/i,  'Amadeus (Holophonix)') ||
-      'Audinate';
+    const manufacturer = pick(
+      rawMf.replace(/Powersft/i, 'Powersoft').replace(/Amadeus/i, 'Amadeus (Holophonix)'),
+      'Audinate'
+    );
 
-    // Clean model field (Powersoft sends a numeric ID like _0000000700000003)
+    // Clean model (Powersoft sends numeric IDs like _0000000700000003)
     const rawModel = txt.model || null;
     const model = rawModel && rawModel.startsWith('_') ? null : rawModel;
 
-    // Detect AES67 mode from various fields
+    // Detect AES67 mode
     const routerInfo = (txt.router_info || '').toLowerCase();
     const isAES67 = txt.aes67 === '1' || txt.aes67 === 'true' ||
                     routerInfo.includes('aes67') ||
-                    routerInfo.includes('danteep'); // Dante Embedded Platform (Holophonix)
+                    routerInfo.includes('danteep');
 
-    // Detect software
+    // Detect software label
     let software = null;
-    if (routerInfo.includes('dante via')) software = 'Dante Via';
-    else if (routerInfo.includes('danteep')) software = 'Dante Embedded Platform';
-    else if (routerInfo.includes('dcm')) software = `Dante Controller Module (${txt.router_vers || ''})`.trim();
+    if (routerInfo.includes('dante via'))        software = 'Dante Via';
+    else if (routerInfo.includes('danteep'))     software = 'Dante Embedded Platform';
+    else if (routerInfo.includes('ultimox'))     software = `Powersoft ${txt.router_info || ''}`.trim();
+    else if (routerInfo.includes('dcm'))         software = `Dante Firmware ${txt.router_vers || ''}`.trim();
+
+    // Name: for _arc service the service name is the device name
+    // For _chan it's "ChannelName@DeviceName" — skip those
+    const isChanService = (service.type || '').includes('chan');
+    const name = isChanService ? null : service.name;
 
     return {
       ...base,
-      model,
+      name,
       manufacturer,
-      sampleRate:   txt.rate ? parseInt(txt.rate) : 48000,
-      txChannels:   txt.txc  ? parseInt(txt.txc)  : null,
-      rxChannels:   txt.rxc  ? parseInt(txt.rxc)  : null,
-      isDante:      true,
-      isAES67,
-      isRAVENNA:    false,
+      model,
       software,
-      routerInfo:   txt.router_info || null,
-      routerVers:   txt.router_vers || null,
-      arcpVers:     txt.arcp_vers  || null,
+      sampleRate:  txt.rate ? parseInt(txt.rate) : null,
+      txChannels:  txt.txc  ? parseInt(txt.txc)  : null,
+      rxChannels:  txt.rxc  ? parseInt(txt.rxc)  : null,
+      isDante:     true,
+      isAES67,
+      isRAVENNA:   false,
+      routerInfo:  txt.router_info || null,
+      routerVers:  txt.router_vers || null,
+      arcpVers:    txt.arcp_vers   || null,
     };
   }
 
   if (family === 'ravenna' || family === 'aes67') {
-    return ravenna.parseDevice(service.name, service.host, service.addresses || [], service.port, txt);
+    const d = ravenna.parseDevice(service.name, service.host, service.addresses || [], service.port, txt);
+    return { ...base, ...d, discoveredBy: base.discoveredBy };
   }
 
   return base;
@@ -93,29 +237,30 @@ function parseService(service) {
 // ─── IPC output ──────────────────────────────────────────────────────────────
 
 function sendUpdate() {
-  const list = [];
-
-  for (const device of devices.values()) {
-    list.push({
-      host:           device.host,
-      name:           device.name,
-      addresses:      device.addresses || [],
-      port:           device.port,
-      protocolFamily: device.protocolFamily || 'dante',
-      manufacturer:   device.manufacturer  || (device.isDante ? 'Audinate' : null),
-      model:          device.model         || null,
-      sampleRate:     device.sampleRate    || 48000,
-      txChannels:      device.txChannels     ?? null,
-      rxChannels:      device.rxChannels     ?? null,
-      txChannelNames:  device.txChannelNames || [],
-      rxChannelNames:  device.rxChannelNames || [],
-      isDante:         device.isDante        !== false,
-      isAES67:        device.isAES67       || false,
-      isRAVENNA:      device.isRAVENNA     || false,
-      software:       device.software      || null,
-      requiresAES67:  !device.isAES67 && device.protocolFamily === 'dante',
-    });
-  }
+  const list = Array.from(devices.values()).map(d => ({
+    ip:             d.ip,
+    host:           d.host,
+    name:           d.name || d.ip,
+    addresses:      d.addresses || [],
+    protocolFamily: d.protocolFamily || 'unknown',
+    manufacturer:   d.manufacturer  || null,
+    model:          d.model         || null,
+    software:       d.software      || null,
+    sampleRate:     d.sampleRate    || null,
+    txChannels:     d.txChannels    ?? null,
+    rxChannels:     d.rxChannels    ?? null,
+    txChannelNames: d.txChannelNames || [],
+    rxChannelNames: d.rxChannelNames || [],
+    isDante:        d.isDante    || false,
+    isAES67:        d.isAES67   || false,
+    isRAVENNA:      d.isRAVENNA || false,
+    arcpVers:       d.arcpVers  || null,
+    routerVers:     d.routerVers || null,
+    routerInfo:     d.routerInfo || null,
+    ptpGrandmaster: d.ptpGrandmaster || null,
+    discoveredBy:   d.discoveredBy || [],
+    lastSeen:       d.lastSeen || Date.now(),
+  }));
 
   process.send({ type: 'dante-devices', devices: list });
 }
@@ -128,34 +273,28 @@ function scheduleUpdate() {
 // ─── mDNS callbacks ──────────────────────────────────────────────────────────
 
 function onServiceUp(service) {
-  console.log(`[Discovery] Found: ${service.name} (${service.type||service.family}) host=${service.host} ip=${(service.addresses||[]).join(',')}`);
+  const patch = parseService(service);
+  const ip    = patch.ip;
+  if (!ip) return; // skip services we couldn't resolve to an IP
 
-  const device   = parseService(service);
-  const existing = devices.get(service.host);
+  console.log(`[Discovery] ${service.name} (${service.type||service.family}) ip=${ip}`);
 
-  // Merge: keep best data from multiple service types for same host
-  const merged = existing ? { ...existing, ...device } : device;
-  // Never lose addresses or channel counts from previous records
-  if (existing) {
-    if (!merged.addresses.length && existing.addresses.length) merged.addresses = existing.addresses;
-    if (merged.txChannels === null && existing.txChannels !== null) merged.txChannels = existing.txChannels;
-    if (merged.rxChannels === null && existing.rxChannels !== null) merged.rxChannels = existing.rxChannels;
-  }
-  devices.set(service.host, merged);
+  const isNew = !devices.has(ip);
+  const merged = upsert(ip, patch);
   scheduleUpdate();
 
-  if (!existing) {
-    // Enrich Dante devices with ARC channel data
-    if (device.isDante) enrichWithArc(device);
-    // Enrich RAVENNA devices with RTSP SDP
-    if (device.isRAVENNA) enrichWithRtsp(device);
+  // Only trigger enrichment once per device IP
+  if (isNew) {
+    if (merged.isDante)   enrichWithArc(merged);
+    if (merged.isRAVENNA) enrichWithRtsp(merged);
   }
 }
 
 function onServiceDown(service) {
-  console.log(`[Discovery] Lost: ${service.name}`);
-  if (service.host) {
-    devices.delete(service.host);
+  const ip = (service.addresses || []).find(a => /^\d+\./.test(a));
+  console.log(`[Discovery] Lost: ${service.name} ip=${ip || '?'}`);
+  if (ip) {
+    devices.delete(ip);
     scheduleUpdate();
   }
 }
@@ -163,29 +302,28 @@ function onServiceDown(service) {
 // ─── ARC enrichment ──────────────────────────────────────────────────────────
 
 async function enrichWithArc(device) {
-  const ip      = device.addresses.find(a => a.includes('.'));
+  const ip      = device.ip || (device.addresses || []).find(a => /^\d+\./.test(a));
   const arcPort = device.port || arc.DEFAULT_PORT;
   if (!ip) return;
 
   const result = await arc.query(ip, arcPort);
   if (!result) {
-    console.log(`[ARC] ${device.name} (${ip}:${arcPort}): no response`);
+    console.log(`[ARC] ${device.name} (${ip}): no response`);
     return;
   }
 
-  const stored = devices.get(device.host);
-  if (!stored) return;
-
-  if (result.deviceName)               stored.name       = result.deviceName;
-  if (result.model)                    stored.model      = result.model;
-  if (result.txChannels !== undefined) stored.txChannels = result.txChannels;
-  if (result.rxChannels !== undefined) stored.rxChannels = result.rxChannels;
-
-  devices.set(device.host, stored);
-  console.log(`[ARC] ${stored.name} (${ip}): ${stored.txChannels ?? '?'}TX / ${stored.rxChannels ?? '?'}RX | model=${stored.model || '-'}`);
+  upsert(ip, {
+    name:       result.deviceName || undefined,
+    model:      result.model      || undefined,
+    txChannels: result.txChannels ?? undefined,
+    rxChannels: result.rxChannels ?? undefined,
+    isDante:    true,
+    discoveredBy: ['arc'],
+  });
+  const stored = devices.get(ip);
+  console.log(`[ARC] ${stored.name} (${ip}): ${stored.txChannels ?? '?'}TX / ${stored.rxChannels ?? '?'}RX`);
   scheduleUpdate();
 
-  // Fetch channel names (same as probeArcIp)
   const txCount = result.txChannels || 0;
   const rxCount = result.rxChannels || 0;
   if (txCount > 0 || rxCount > 0) {
@@ -193,25 +331,22 @@ async function enrichWithArc(device) {
       txCount > 0 ? arc.getTxChannels(ip, arcPort, txCount) : Promise.resolve([]),
       rxCount > 0 ? arc.getRxChannels(ip, arcPort, rxCount) : Promise.resolve([]),
     ]);
-    const s = devices.get(device.host);
-    if (s) {
-      if (txChs.length > 0) {
-        s.txChannelNames = txChs;
-        console.log(`[ARC] ${s.name} TX channels: ${txChs.slice(0, 4).map(c => c.name || `ch${c.id}`).join(', ')}${txChs.length > 4 ? '...' : ''}`);
-      }
-      if (rxChs.length > 0) {
-        s.rxChannelNames = rxChs;
-      }
-      devices.set(device.host, s);
-      scheduleUpdate();
+    upsert(ip, {
+      txChannelNames: txChs.length > 0 ? txChs : undefined,
+      rxChannelNames: rxChs.length > 0 ? rxChs : undefined,
+    });
+    if (txChs.length > 0) {
+      const s = devices.get(ip);
+      console.log(`[ARC] ${s.name} TX: ${txChs.slice(0, 4).map(c => c.name || `ch${c.id}`).join(', ')}${txChs.length > 4 ? '...' : ''}`);
     }
+    scheduleUpdate();
   }
 }
 
 // ─── RTSP enrichment ─────────────────────────────────────────────────────────
 
 async function enrichWithRtsp(device, streamNames = []) {
-  const ip = device.addresses.find(a => a.includes('.'));
+  const ip = device.ip || (device.addresses || []).find(a => /^\d+\./.test(a));
   if (!ip) return;
 
   const port = device.port || ravenna.RTSP_PORT;
@@ -219,6 +354,7 @@ async function enrichWithRtsp(device, streamNames = []) {
   if (!result) return;
 
   console.log(`[RTSP] SDP from ${device.name} (${ip})`);
+  upsert(ip, { discoveredBy: ['rtsp'] });
   process.send({ type: 'ravenna-sdp', name: device.name, sdp: result, sourceIp: ip });
 }
 
@@ -229,21 +365,20 @@ async function probeArcIp(ip) {
   const result = await arc.query(ip, port);
   if (!result) return;
 
-  console.log(`[ARC Probe] ${ip}: name="${result.deviceName || '-'}" model="${result.model || '-'}" ${result.txChannels ?? '?'}TX/${result.rxChannels ?? '?'}RX`);
+  console.log(`[ARC Probe] ${ip}: name="${result.deviceName || '-'}" ${result.txChannels ?? '?'}TX/${result.rxChannels ?? '?'}RX`);
 
-  const existing = devices.get(ip) || { host: ip, addresses: [ip], port };
-  if (result.deviceName)               existing.name       = result.deviceName;
-  if (result.model)                    existing.model      = result.model;
-  if (result.txChannels !== undefined) existing.txChannels = result.txChannels;
-  if (result.rxChannels !== undefined) existing.rxChannels = result.rxChannels;
-  existing.isDante        = true;
-  existing.protocolFamily = 'dante';
-  existing.manufacturer   = 'Audinate';
-
-  devices.set(ip, existing);
+  upsert(ip, {
+    name:           result.deviceName || undefined,
+    model:          result.model      || undefined,
+    txChannels:     result.txChannels ?? undefined,
+    rxChannels:     result.rxChannels ?? undefined,
+    isDante:        true,
+    protocolFamily: 'dante',
+    manufacturer:   'Audinate',
+    discoveredBy:   ['arc-probe'],
+  });
   scheduleUpdate();
 
-  // Fetch TX and RX channel names in parallel (non-blocking — update again when done)
   const txCount = result.txChannels || 0;
   const rxCount = result.rxChannels || 0;
   if (txCount > 0 || rxCount > 0) {
@@ -251,23 +386,20 @@ async function probeArcIp(ip) {
       txCount > 0 ? arc.getTxChannels(ip, port, txCount) : Promise.resolve([]),
       rxCount > 0 ? arc.getRxChannels(ip, port, rxCount) : Promise.resolve([]),
     ]);
-
-    const stored = devices.get(ip);
-    if (stored) {
-      if (txChs.length > 0) {
-        stored.txChannelNames = txChs;
-        console.log(`[ARC Probe] ${ip} TX channels: ${txChs.slice(0, 4).map(c => c.name || `ch${c.id}`).join(', ')}${txChs.length > 4 ? '...' : ''}`);
-      }
-      if (rxChs.length > 0) {
-        stored.rxChannelNames = rxChs;
-        const subscribed = rxChs.filter(c => c.subscribed);
-        if (subscribed.length > 0) {
-          console.log(`[ARC Probe] ${ip} RX subscriptions: ${subscribed.slice(0, 4).map(c => `${c.name}←${c.txHost || '?'}`).join(', ')}`);
-        }
-      }
-      devices.set(ip, stored);
-      scheduleUpdate();
+    if (txChs.length > 0) {
+      console.log(`[ARC Probe] ${ip} TX: ${txChs.slice(0, 4).map(c => c.name || `ch${c.id}`).join(', ')}${txChs.length > 4 ? '...' : ''}`);
     }
+    if (rxChs.length > 0) {
+      const subscribed = rxChs.filter(c => c.subscribed);
+      if (subscribed.length > 0) {
+        console.log(`[ARC Probe] ${ip} RX subs: ${subscribed.slice(0, 4).map(c => `${c.name}<-${c.txHost || '?'}`).join(', ')}`);
+      }
+    }
+    upsert(ip, {
+      txChannelNames: txChs.length > 0 ? txChs : undefined,
+      rxChannelNames: rxChs.length > 0 ? rxChs : undefined,
+    });
+    scheduleUpdate();
   }
 }
 
