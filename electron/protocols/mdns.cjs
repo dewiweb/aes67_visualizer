@@ -78,7 +78,8 @@ function lookupService(name, serviceType, family, onUp) {
     const lines = buffer.split('\n');
     buffer = lines.pop();
 
-    for (const line of lines) {
+    for (const rawLine of lines) {
+      const line = rawLine.replace(/\r/g, ''); // strip CR
       flog(`lookup[${name}] raw: ${JSON.stringify(line)}`);
 
       // Line 1: "  <name> can be reached at <host>:<port> (interface N)"
@@ -171,21 +172,22 @@ function browse(callbacks) {
       const lines = buffer.split('\n');
       buffer = lines.pop();
 
-      for (const line of lines) {
-        if (line.trim()) flog(`browse[${svc.type}] raw: ${JSON.stringify(line)}`);
+      for (const rawLine of lines) {
+        const line = rawLine.replace(/\r/g, '').trim(); // strip CRLF
+        if (line) flog(`browse[${svc.type}] raw: ${JSON.stringify(line)}`);
 
-        if (line.startsWith('Add')) {
-          // "Add  2  5 local. _netaudio-arc._udp. Device\ Name"
-          const match = line.match(/^Add\s+\d+\s+\d+\s+\S+\s+\S+\s+(.+)$/);
-          if (match) {
-            const name = match[1].trim().replace(/\\ /g, ' ');
-            const lp = lookupService(name, svc.type, svc.family, onUp);
-            lookupProcs.push(lp);
-          }
-        } else if (line.startsWith('Rmv')) {
-          const match = line.match(/^Rmv\s+\d+\s+\d+\s+\S+\s+\S+\s+(.+)$/);
-          if (match && onDown) {
-            const name = match[1].trim().replace(/\\ /g, ' ');
+        // dns-sd output: "HH:MM:SS.mmm  Add  flags if domain  type  name"
+        // or just:       "Add  flags if domain  type  name" (no timestamp)
+        const addMatch = line.match(/\bAdd\s+\d+\s+\d+\s+\S+\s+\S+\.\s+(.+)$/);
+        if (addMatch) {
+          const name = addMatch[1].trim().replace(/\\ /g, ' ');
+          flog(`browse[${svc.type}] Add: ${JSON.stringify(name)}`);
+          const lp = lookupService(name, svc.type, svc.family, onUp);
+          lookupProcs.push(lp);
+        } else {
+          const rmvMatch = line.match(/\bRmv\s+\d+\s+\d+\s+\S+\s+\S+\.\s+(.+)$/);
+          if (rmvMatch && onDown) {
+            const name = rmvMatch[1].trim().replace(/\\ /g, ' ');
             onDown({ name, host: name });
           }
         }
