@@ -88,16 +88,42 @@ function validateSdp(sdp, raw) {
   }
 
   // ── PTP clock reference (a=ts-refclk) ─────────────────────────────────────
-  // Format: a=ts-refclk:ptp=IEEE1588-2008:GM-EUI64:domain
+  // Formats (per AES67, confirmed by PAM/RavennaKit source):
+  //   a=ts-refclk:ptp=IEEE1588-2008:GM-EUI64:domain
+  //   a=ts-refclk:ptp=IEEE1588-2008:traceable
+  //   a=ts-refclk:ntp=<server>
+  //   a=ts-refclk:localmac=<mac>
+  // RAVENNA also uses:
+  //   a=clock-domain:PTP V2 <domain>  → implies PTP IEEE1588-2008
   if (raw) {
     const ptpMatch = raw.match(/a=ts-refclk:ptp=(IEEE1588-\d+):([0-9A-Fa-f-]+):?(\d*)/i);
     if (ptpMatch) {
       sdp.ptpVersion     = ptpMatch[1];
       sdp.ptpGrandmaster = ptpMatch[2].toUpperCase();
-      sdp.ptpDomain      = ptpMatch[3] || '0';
+      sdp.ptpDomain      = ptpMatch[3] !== undefined ? ptpMatch[3] : '0';
     } else {
-      const clockMatch = raw.match(/a=ts-refclk:(.+)/i);
-      if (clockMatch) sdp.clockRef = clockMatch[1].trim();
+      const traceableMatch = raw.match(/a=ts-refclk:ptp=(IEEE1588-\d+):traceable/i);
+      if (traceableMatch) {
+        sdp.ptpVersion     = traceableMatch[1];
+        sdp.ptpGrandmaster = 'traceable';
+        sdp.ptpDomain      = '0';
+      } else {
+        const ntpMatch = raw.match(/a=ts-refclk:ntp=(.+)/i);
+        if (ntpMatch) sdp.clockRef = `ntp=${ntpMatch[1].trim()}`;
+
+        const macMatch = raw.match(/a=ts-refclk:localmac=([0-9A-Fa-f:-]+)/i);
+        if (macMatch) sdp.clockRef = `localmac=${macMatch[1].trim()}`;
+      }
+    }
+
+    // a=clock-domain:PTP V2 <domain>  (RAVENNA extension — confirmed by PAM)
+    if (!sdp.ptpVersion) {
+      const clockDomainMatch = raw.match(/a=clock-domain:PTP\s+V(\d+)\s+(\d+)/i);
+      if (clockDomainMatch) {
+        sdp.ptpVersion     = `IEEE1588-200${clockDomainMatch[1] === '1' ? '2' : '8'}`;
+        sdp.ptpDomain      = clockDomainMatch[2];
+        sdp.ptpGrandmaster = sdp.ptpGrandmaster || null;
+      }
     }
 
     // a=mediaclk:direct=<offset>
