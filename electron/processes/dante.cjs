@@ -246,53 +246,47 @@ function arcRequest(ip, port, packet, timeout = 1500) {
 /**
  * Query Dante device via ARC protocol — returns { name, model, txChannels, rxChannels } or null
  */
-async function danteArcQuery(ip, port = 4440, timeout = 2000) {
+async function danteArcQuery(ip, port = 4440, timeout = 800) {
   const result = {};
 
-  // 1. Channel count (OPCODE 0x1000)
-  const ccReq = arcBuildRequest(ARC_OPCODE_CHANNEL_COUNT);
-  const ccRaw = await arcRequest(ip, port, ccReq, timeout);
+  // Send all 3 queries in parallel for speed
+  const [ccRaw, nameRaw, infoRaw] = await Promise.all([
+    arcRequest(ip, port, arcBuildRequest(ARC_OPCODE_CHANNEL_COUNT), timeout),
+    arcRequest(ip, port, arcBuildRequest(ARC_OPCODE_DEVICE_NAME),   timeout),
+    arcRequest(ip, port, arcBuildRequest(ARC_OPCODE_DEVICE_INFO),   timeout),
+  ]);
+
+  // 1. Channel count — body layout: HHHHHHH = flags,tx,rx,tx_active,rx_active,max_tx,max_rx
   if (ccRaw && ccRaw.length >= 24) {
-    // Response: 10-byte header (HHHHH) + body
-    // body layout (from protocol.py parse_channel_count): HHHHHHH = flags,tx,rx,tx_active,rx_active,max_tx,max_rx
-    const resultCode = ccRaw.readUInt16BE(8);
-    if (resultCode === ARC_RESULT_SUCCESS || resultCode === ARC_RESULT_SUCCESS_EXT) {
-      result.txChannels = ccRaw.readUInt16BE(12); // body offset 2 = tx
-      result.rxChannels = ccRaw.readUInt16BE(14); // body offset 4 = rx
+    const rc = ccRaw.readUInt16BE(8);
+    if (rc === ARC_RESULT_SUCCESS || rc === ARC_RESULT_SUCCESS_EXT) {
+      result.txChannels = ccRaw.readUInt16BE(12);
+      result.rxChannels = ccRaw.readUInt16BE(14);
     }
   }
 
-  // 2. Device name (OPCODE 0x1002)
-  const nameReq = arcBuildRequest(ARC_OPCODE_DEVICE_NAME);
-  const nameRaw = await arcRequest(ip, port, nameReq, timeout);
-  if (nameRaw && nameRaw.length > 10) {
-    const resultCode = nameRaw.readUInt16BE(8);
-    if (resultCode === ARC_RESULT_SUCCESS) {
-      const nameBody = nameRaw.slice(10);
-      const nullIdx = nameBody.indexOf(0);
-      result.deviceName = nameBody.slice(0, nullIdx >= 0 ? nullIdx : undefined).toString('utf8');
-    }
+  // 2. Device name
+  if (nameRaw && nameRaw.length > 10 && nameRaw.readUInt16BE(8) === ARC_RESULT_SUCCESS) {
+    const body = nameRaw.slice(10);
+    const nullIdx = body.indexOf(0);
+    const name = body.slice(0, nullIdx >= 0 ? nullIdx : undefined).toString('utf8').trim();
+    if (name) result.deviceName = name;
   }
 
-  // 3. Device info (OPCODE 0x1003) — model name
-  const infoReq = arcBuildRequest(ARC_OPCODE_DEVICE_INFO);
-  const infoRaw = await arcRequest(ip, port, infoReq, timeout);
-  if (infoRaw && infoRaw.length > 28) {
-    const resultCode = infoRaw.readUInt16BE(8);
-    if (resultCode === ARC_RESULT_SUCCESS) {
-      // body starts at offset 10; model string pointer at body[12:14] (offset 22 absolute)
-      try {
-        const body = infoRaw.slice(10);
-        const modelPtr = body.readUInt16BE(12);
-        if (modelPtr > 0) {
-          const strOffset = modelPtr - 10;
-          if (strOffset > 0 && strOffset < body.length) {
-            const nullIdx = body.indexOf(0, strOffset);
-            result.model = body.slice(strOffset, nullIdx >= 0 ? nullIdx : undefined).toString('utf8');
-          }
+  // 3. Device info — model string pointer at body[12:14]
+  if (infoRaw && infoRaw.length > 28 && infoRaw.readUInt16BE(8) === ARC_RESULT_SUCCESS) {
+    try {
+      const body = infoRaw.slice(10);
+      const modelPtr = body.readUInt16BE(12);
+      if (modelPtr > 0) {
+        const strOffset = modelPtr - 10;
+        if (strOffset > 0 && strOffset < body.length) {
+          const nullIdx = body.indexOf(0, strOffset);
+          const model = body.slice(strOffset, nullIdx >= 0 ? nullIdx : undefined).toString('utf8').trim();
+          if (model) result.model = model;
         }
-      } catch (_) {}
-    }
+      }
+    } catch (_) {}
   }
 
   return (result.txChannels !== undefined || result.deviceName) ? result : null;
