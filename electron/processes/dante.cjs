@@ -200,50 +200,102 @@ function rtspDescribe(ip, port, streamNames = [], timeout = 4000) {
   });
 }
 
+// Dante ARC protocol constants (from network-audio-controller)
+const ARC_PROTOCOL_ID    = 0x27FF;
+const ARC_OPCODE_CHANNEL_COUNT = 0x1000;
+const ARC_OPCODE_DEVICE_NAME   = 0x1002;
+const ARC_OPCODE_DEVICE_INFO   = 0x1003;
+const ARC_RESULT_SUCCESS       = 0x0001;
+const ARC_RESULT_SUCCESS_EXT   = 0x8112;
+
 /**
- * Query Dante device channel count via ARC protocol (UDP, port from _netaudio-arc._udp)
- * Returns { txChannels, rxChannels } or null
+ * Build a Dante ARC request packet
+ * Header: protocol(2) + length(2) + transaction_id(2) + opcode(2) + payload
  */
-function danteArcQuery(ip, port, timeout = 2000) {
+function arcBuildRequest(opcode, payload = Buffer.from([0x00, 0x00])) {
+  const txId  = Math.floor(Math.random() * 0xFFFF);
+  const length = 8 + payload.length;
+  const header = Buffer.alloc(8);
+  header.writeUInt16BE(ARC_PROTOCOL_ID, 0);
+  header.writeUInt16BE(length, 2);
+  header.writeUInt16BE(txId, 4);
+  header.writeUInt16BE(opcode, 6);
+  return Buffer.concat([header, payload]);
+}
+
+/**
+ * Send one ARC UDP request and receive response
+ */
+function arcRequest(ip, port, packet, timeout = 1500) {
   return new Promise((resolve) => {
-    const socket = dgram.createSocket('udp4');
-    // Channel count request: 27ff000affff10000000
-    const request = Buffer.from('27ff000affff10000000', 'hex');
-    let done = false;
-
-    const timer = setTimeout(() => {
-      if (!done) { done = true; socket.close(); resolve(null); }
-    }, timeout);
-
-    socket.on('message', (msg) => {
-      if (done) return;
-      done = true;
+    const sock = dgram.createSocket('udp4');
+    let settled = false;
+    const done = (v) => {
+      if (settled) return; settled = true;
       clearTimeout(timer);
-      socket.close();
-
-      // Response layout (from network-audio-controller reverse engineering):
-      // bytes 0-3: header 27ff002c
-      // bytes 4-7: ffff1000
-      // bytes 8-9: 0001
-      // bytes 10-11: TX count (big-endian uint16)
-      // bytes 12-13: RX count (big-endian uint16)
-      if (msg.length >= 14) {
-        const txChannels = msg.readUInt16BE(10);
-        const rxChannels = msg.readUInt16BE(12);
-        resolve({ txChannels, rxChannels });
-      } else {
-        resolve(null);
-      }
-    });
-
-    socket.on('error', () => {
-      if (!done) { done = true; clearTimeout(timer); resolve(null); }
-    });
-
-    socket.send(request, port, ip, (err) => {
-      if (err && !done) { done = true; clearTimeout(timer); socket.close(); resolve(null); }
-    });
+      try { sock.close(); } catch (_) {}
+      resolve(v);
+    };
+    const timer = setTimeout(() => done(null), timeout);
+    sock.on('error', () => done(null));
+    sock.on('message', (msg) => done(msg));
+    sock.send(packet, port, ip, (err) => { if (err) done(null); });
   });
+}
+
+/**
+ * Query Dante device via ARC protocol — returns { name, model, txChannels, rxChannels } or null
+ */
+async function danteArcQuery(ip, port = 4440, timeout = 2000) {
+  const result = {};
+
+  // 1. Channel count (OPCODE 0x1000)
+  const ccReq = arcBuildRequest(ARC_OPCODE_CHANNEL_COUNT);
+  const ccRaw = await arcRequest(ip, port, ccReq, timeout);
+  if (ccRaw && ccRaw.length >= 24) {
+    // Response: 10-byte header (HHHHH) + body
+    // body layout (from protocol.py parse_channel_count): HHHHHHH = flags,tx,rx,tx_active,rx_active,max_tx,max_rx
+    const resultCode = ccRaw.readUInt16BE(8);
+    if (resultCode === ARC_RESULT_SUCCESS || resultCode === ARC_RESULT_SUCCESS_EXT) {
+      result.txChannels = ccRaw.readUInt16BE(12); // body offset 2 = tx
+      result.rxChannels = ccRaw.readUInt16BE(14); // body offset 4 = rx
+    }
+  }
+
+  // 2. Device name (OPCODE 0x1002)
+  const nameReq = arcBuildRequest(ARC_OPCODE_DEVICE_NAME);
+  const nameRaw = await arcRequest(ip, port, nameReq, timeout);
+  if (nameRaw && nameRaw.length > 10) {
+    const resultCode = nameRaw.readUInt16BE(8);
+    if (resultCode === ARC_RESULT_SUCCESS) {
+      const nameBody = nameRaw.slice(10);
+      const nullIdx = nameBody.indexOf(0);
+      result.deviceName = nameBody.slice(0, nullIdx >= 0 ? nullIdx : undefined).toString('utf8');
+    }
+  }
+
+  // 3. Device info (OPCODE 0x1003) — model name
+  const infoReq = arcBuildRequest(ARC_OPCODE_DEVICE_INFO);
+  const infoRaw = await arcRequest(ip, port, infoReq, timeout);
+  if (infoRaw && infoRaw.length > 28) {
+    const resultCode = infoRaw.readUInt16BE(8);
+    if (resultCode === ARC_RESULT_SUCCESS) {
+      // body starts at offset 10; model string pointer at body[12:14] (offset 22 absolute)
+      try {
+        const body = infoRaw.slice(10);
+        const modelPtr = body.readUInt16BE(12);
+        if (modelPtr > 0) {
+          const strOffset = modelPtr - 10;
+          if (strOffset > 0 && strOffset < body.length) {
+            const nullIdx = body.indexOf(0, strOffset);
+            result.model = body.slice(strOffset, nullIdx >= 0 ? nullIdx : undefined).toString('utf8');
+          }
+        }
+      } catch (_) {}
+    }
+  }
+
+  return (result.txChannels !== undefined || result.deviceName) ? result : null;
 }
 
 /**
@@ -264,7 +316,7 @@ async function fetchRavennaStreams(device) {
 }
 
 /**
- * Enrich a Dante device with its channel count via ARC protocol
+ * Enrich a Dante device with name, model and channel counts via ARC protocol
  */
 async function fetchDanteChannels(device) {
   const ip = device.addresses.find(a => a.includes('.'));
@@ -272,14 +324,19 @@ async function fetchDanteChannels(device) {
   if (!ip) return;
 
   const result = await danteArcQuery(ip, arcPort);
-  if (!result) return;
+  if (!result) {
+    console.log(`[Dante ARC] ${device.name} (${ip}:${arcPort}): no response`);
+    return;
+  }
 
   const existing = devices.get(device.host);
   if (existing) {
-    existing.txChannels = result.txChannels || existing.txChannels;
-    existing.rxChannels = result.rxChannels || existing.rxChannels;
+    if (result.txChannels !== undefined) existing.txChannels = result.txChannels;
+    if (result.rxChannels !== undefined) existing.rxChannels = result.rxChannels;
+    if (result.deviceName)               existing.name      = result.deviceName;
+    if (result.model)                    existing.model     = result.model;
     devices.set(device.host, existing);
-    console.log(`[Dante ARC] ${device.name}: ${result.txChannels}TX / ${result.rxChannels}RX`);
+    console.log(`[Dante ARC] ${existing.name} (${ip}): ${result.txChannels ?? '?'}TX / ${result.rxChannels ?? '?'}RX | model=${result.model || '-'}`);
     scheduleUpdate();
   }
 }
