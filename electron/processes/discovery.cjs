@@ -293,6 +293,7 @@ async function probeRtspIp(ip, streamNames = []) {
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
 
 function init() {
+  flog('init() called — starting mDNS browse');
   stop();
   mdnsHandle = mdns.browse({ onUp: onServiceUp, onDown: onServiceDown });
   process.send({ type: 'status', status: 'browsing' });

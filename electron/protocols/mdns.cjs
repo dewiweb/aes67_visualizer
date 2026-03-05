@@ -172,6 +172,8 @@ function browse(callbacks) {
       buffer = lines.pop();
 
       for (const line of lines) {
+        if (line.trim()) flog(`browse[${svc.type}] raw: ${JSON.stringify(line)}`);
+
         if (line.startsWith('Add')) {
           // "Add  2  5 local. _netaudio-arc._udp. Device\ Name"
           const match = line.match(/^Add\s+\d+\s+\d+\s+\S+\s+\S+\s+(.+)$/);
