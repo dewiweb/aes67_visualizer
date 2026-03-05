@@ -141,28 +141,51 @@ function rtspDescribe(ip, port, timeout = 4000) {
 
     socket.connect(port, ip, async () => {
       try {
-        const base = `rtsp://${ip}:${port}`;
+        // RFC 2326: URL should omit port if it's the default (554)
+        // Some devices (Lawo) reject URLs with explicit port number
+        const baseWithPort    = `rtsp://${ip}:${port}`;
+        const baseWithoutPort = port === 554 ? `rtsp://${ip}` : baseWithPort;
 
-        // Step 1: OPTIONS to check RTSP support and get Public methods
-        const optResp = await Promise.race([
-          rtspRequest(socket, 'OPTIONS', `${base}/`, 1),
-          new Promise(r => setTimeout(() => r(null), 2000)),
-        ]);
+        // Step 1: OPTIONS — try without port first (Lawo), then with port
+        let optResp = null;
+        let base = baseWithoutPort;
+
+        for (const tryBase of [baseWithoutPort, baseWithPort]) {
+          base = tryBase;
+          optResp = await Promise.race([
+            rtspRequest(socket, 'OPTIONS', `${tryBase}/`, 1),
+            new Promise(r => setTimeout(() => r(null), 2000)),
+          ]);
+          if (!optResp) continue;
+          const st = optResp.headers.match(/^RTSP\/1\.0\s+(\d+)/);
+          if (st && st[1] === '200') break; // success
+          optResp = null; // try next base
+        }
 
         if (!optResp) return done(null);
 
         const statusMatch = optResp.headers.match(/^RTSP\/1\.0\s+(\d+)/);
-        const status = statusMatch ? parseInt(statusMatch[1]) : 0;
-        if (status !== 200) {
-          console.log(`[RTSP] ${ip}:${port} OPTIONS ${status} — ${optResp.headers.slice(0,120).replace(/\r\n/g,' | ')}`);
+        if (!statusMatch || statusMatch[1] !== '200') {
+          console.log(`[RTSP] ${ip}:${port} OPTIONS failed: ${optResp.headers.slice(0,80).replace(/\r\n/g,' | ')}`);
           return done(null);
         }
 
-        // Step 2: DESCRIBE on common RAVENNA paths
-        const paths = ['/', '/stream', '/streams', '/audio', '/ravenna', '/session'];
+        // Step 2: DESCRIBE — RAVENNA standard paths + common fallbacks
+        const paths = [
+          '/',
+          '/by-name/',      // RAVENNA standard: list all streams by name
+          '/stream',
+          '/streams',
+          '/audio',
+          '/ravenna',
+          '/session',
+          '/by-id/1',       // RAVENNA: first stream by ID
+        ];
+
+        let cseq = 2;
         for (const path of paths) {
           const desc = await Promise.race([
-            rtspRequest(socket, 'DESCRIBE', `${base}${path}`, 2 + paths.indexOf(path), 'Accept: application/sdp\r\n'),
+            rtspRequest(socket, 'DESCRIBE', `${base}${path}`, cseq++, 'Accept: application/sdp\r\n'),
             new Promise(r => setTimeout(() => r(null), 2000)),
           ]);
 
@@ -172,9 +195,8 @@ function rtspDescribe(ip, port, timeout = 4000) {
           if (dStatus && dStatus[1] === '200' && desc.body.trim().startsWith('v=')) {
             return done(desc.body.trim());
           }
-          if (dStatus && dStatus[1] !== '404') {
-            // Log non-404 failures (e.g. 401, 400) for the first path only
-            if (path === '/') console.log(`[RTSP] ${ip}:${port}${path} DESCRIBE ${dStatus[1]}`);
+          if (dStatus && !['404','400'].includes(dStatus[1])) {
+            console.log(`[RTSP] ${ip}:${port}${path} DESCRIBE ${dStatus[1]}`);
           }
         }
 
