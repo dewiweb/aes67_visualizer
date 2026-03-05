@@ -20,6 +20,7 @@ let ptpProcess;
 // Stream storage
 let sapStreams = [];
 let danteDevices = [];
+let probedIps = new Set(); // IPs already probed via RTSP
 
 // Persistent data
 let persistentData = store.get('persistentData', {
@@ -146,6 +147,7 @@ function sendToRenderer(channel, data) {
 }
 
 
+
 function initChildProcesses() {
   // SDP/SAP Discovery Process
   sdpProcess = fork(path.join(__dirname, 'processes/sdp.cjs'));
@@ -154,6 +156,15 @@ function initChildProcesses() {
     if (data.type === 'streams') {
       sapStreams = data.streams;
       sendToRenderer('streams-update', sapStreams);
+
+      // Probe new SAP source IPs via RTSP to discover all RAVENNA streams
+      for (const stream of sapStreams) {
+        const ip = stream.deviceIp || stream.sapSourceIp;
+        if (ip && !probedIps.has(ip) && danteProcess) {
+          probedIps.add(ip);
+          danteProcess.send({ type: 'probe-rtsp', ip });
+        }
+      }
     } else if (data.type === 'port-conflict') {
       console.error('[SDP Port Conflict]', data.message);
       // Try to find which process is using the port

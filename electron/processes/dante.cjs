@@ -470,6 +470,22 @@ function refresh() {
   init();
 }
 
+/**
+ * Probe RTSP on an IP across common RAVENNA ports, forward any SDP found
+ */
+async function probeRtspIp(ip) {
+  const RAVENNA_RTSP_PORTS = [9010, 554, 8554, 9020, 8000, 5000, 7272];
+  for (const port of RAVENNA_RTSP_PORTS) {
+    const sdp = await rtspDescribe(ip, port, 2000);
+    if (sdp) {
+      console.log(`[RTSP Probe] ${ip}:${port} → SDP found`);
+      process.send({ type: 'ravenna-sdp', name: ip, sdp, sourceIp: ip });
+      return; // found on this port, stop probing
+    }
+  }
+  console.log(`[RTSP Probe] ${ip}: no RTSP response on any port`);
+}
+
 // IPC message handler
 process.on('message', (msg) => {
   switch (msg.type) {
@@ -481,6 +497,9 @@ process.on('message', (msg) => {
       break;
     case 'refresh':
       refresh();
+      break;
+    case 'probe-rtsp':
+      probeRtspIp(msg.ip);
       break;
   }
 });
