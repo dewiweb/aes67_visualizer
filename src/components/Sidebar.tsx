@@ -41,7 +41,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const sapStreams = streams.filter((s) => s.sourceType === 'sap' || s.sourceType === 'dante' || s.sourceType === 'ravenna');
+  const sapStreams = streams.filter((s) => s.sourceType === 'sap');
   const manualStreams = streams.filter((s) => s.sourceType === 'manual');
 
   // Count unique devices (SAP-based + pure Dante mDNS)

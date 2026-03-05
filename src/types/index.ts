@@ -9,7 +9,7 @@ export interface Stream {
   ptime: number;
   isSupported: boolean;
   unsupportedReason?: string;
-  sourceType: 'sap' | 'manual' | 'dante' | 'ravenna';
+  sourceType: 'sap' | 'manual';
   manual: boolean;
   dante?: boolean;
   danteDevice?: {

@@ -32,16 +32,7 @@ const AES67_TYPE_NAMES  = AES67_SERVICES.map(s => s.type);
 let bonjour = null;
 let browsers = [];
 let devices = new Map(); // hostname -> device info
-let channels = new Map(); // device hostname -> channels
 let updateTimer = null;
-
-/**
- * Generate stream ID from device info
- */
-function generateStreamId(device, channelInfo) {
-  const data = `${device.host}-${channelInfo?.name || 'default'}`;
-  return crypto.createHash('md5').update(data).digest('hex');
-}
 
 /**
  * Detect protocol family from service type name (as returned by bonjour-service, no underscores)
@@ -109,84 +100,31 @@ function parseDevice(service) {
 }
 
 /**
- * Convert discovered device to stream format for UI
- */
-function deviceToStream(device) {
-  const ipv4 = device.addresses.find(addr => addr.includes('.')) || device.addresses[0];
-  
-  if (!ipv4) return null;
-
-  const txChannels = device.txChannels || device.channels || 2;
-  const family = device.protocolFamily || 'dante';
-
-  const base = {
-    id: generateStreamId(device, null),
-    name: device.name,
-    mcast: ipv4,
-    port: device.port || (family === 'dante' ? 4440 : 5004),
-    channels: txChannels,
-    sampleRate: device.sampleRate || 48000,
-    codec: 'L24',
-    ptime: 1,
-    isSupported: true,
-    dante: family === 'dante',
-    danteDevice: {
-      host: device.host,
-      model: device.model,
-      manufacturer: device.manufacturer || (family === 'ravenna' ? 'RAVENNA' : 'AES67'),
-      isAES67: device.isAES67 || false,
-      isRAVENNA: device.isRAVENNA || false,
-      software: device.software,
-    },
-    requiresSubscription: family === 'dante' && !device.isAES67,
-  };
-
-  if (family === 'dante') {
-    return { ...base, sourceType: 'dante' };
-  }
-
-  // RAVENNA / AES67 devices — mark as ravenna source type
-  return {
-    ...base,
-    sourceType: 'ravenna',
-    ptpGrandmaster: device.ptpGrandmaster || null,
-  };
-}
-
-/**
- * Send update to main process
+ * Send update to main process — devices only, streams come from SAP
  */
 function sendUpdate() {
-  const streams = [];
   const danteDevices = [];
   
   for (const [hostname, device] of devices) {
-    const stream = deviceToStream(device);
-    if (stream) {
-      streams.push(stream);
-    } else {
-      // Device detected but no routable stream (pure Dante without AES67)
-      danteDevices.push({
-        host: device.host,
-        name: device.name,
-        addresses: device.addresses,
-        port: device.port,
-        protocolFamily: device.protocolFamily || 'dante',
-        manufacturer: device.manufacturer || 'Audinate',
-        model: device.model || null,
-        sampleRate: device.sampleRate || 48000,
-        txChannels: device.txChannels || null,
-        rxChannels: device.rxChannels || null,
-        isDante: device.isDante !== false,
-        isAES67: device.isAES67 || false,
-        isRAVENNA: device.isRAVENNA || false,
-        software: device.software || null,
-        requiresAES67: !device.isAES67 && (device.protocolFamily === 'dante'),
-      });
-    }
+    danteDevices.push({
+      host: device.host,
+      name: device.name,
+      addresses: device.addresses || [],
+      port: device.port,
+      protocolFamily: device.protocolFamily || 'dante',
+      manufacturer: device.manufacturer || (device.isDante ? 'Audinate' : null),
+      model: device.model || null,
+      sampleRate: device.sampleRate || 48000,
+      txChannels: device.txChannels || null,
+      rxChannels: device.rxChannels || null,
+      isDante: device.isDante !== false,
+      isAES67: device.isAES67 || false,
+      isRAVENNA: device.isRAVENNA || false,
+      software: device.software || null,
+      requiresAES67: !device.isAES67 && (device.protocolFamily === 'dante'),
+    });
   }
 
-  process.send({ type: 'dante-streams', streams });
   process.send({ type: 'dante-devices', devices: danteDevices });
 }
 

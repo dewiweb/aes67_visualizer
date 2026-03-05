@@ -17,9 +17,8 @@ let audioProcess;
 let metersProcess;
 let ptpProcess;
 
-// Stream storage for merging SAP and Dante
+// Stream storage
 let sapStreams = [];
-let danteStreams = [];
 let danteDevices = [];
 
 // Persistent data
@@ -146,37 +145,6 @@ function sendToRenderer(channel, data) {
   }
 }
 
-/**
- * Merge SAP and Dante streams and send to renderer
- */
-function sendMergedStreams() {
-  // Combine streams, avoiding duplicates (by multicast address for AES67-enabled Dante)
-  const mergedMap = new Map();
-  
-  // Add SAP streams first
-  for (const stream of sapStreams) {
-    mergedMap.set(stream.id, stream);
-  }
-  
-  // Add Dante streams (may override if same device has AES67 enabled)
-  for (const stream of danteStreams) {
-    // Check if there's already an AES67 stream from this device
-    const existingStream = Array.from(mergedMap.values()).find(
-      s => s.mcast === stream.mcast || s.name === stream.name
-    );
-    
-    if (!existingStream) {
-      mergedMap.set(stream.id, stream);
-    } else if (stream.danteDevice && !existingStream.danteDevice) {
-      // Enhance existing stream with Dante device info
-      existingStream.danteDevice = stream.danteDevice;
-      existingStream.dante = true;
-    }
-  }
-  
-  const allStreams = Array.from(mergedMap.values());
-  sendToRenderer('streams-update', allStreams);
-}
 
 function initChildProcesses() {
   // SDP/SAP Discovery Process
@@ -185,7 +153,7 @@ function initChildProcesses() {
   sdpProcess.on('message', async (data) => {
     if (data.type === 'streams') {
       sapStreams = data.streams;
-      sendMergedStreams();
+      sendToRenderer('streams-update', sapStreams);
     } else if (data.type === 'port-conflict') {
       console.error('[SDP Port Conflict]', data.message);
       // Try to find which process is using the port
@@ -246,10 +214,7 @@ function initChildProcesses() {
   danteProcess = fork(path.join(__dirname, 'processes/dante.cjs'));
   
   danteProcess.on('message', (data) => {
-    if (data.type === 'dante-streams') {
-      danteStreams = data.streams;
-      sendMergedStreams();
-    } else if (data.type === 'dante-devices') {
+    if (data.type === 'dante-devices') {
       danteDevices = data.devices;
       sendToRenderer('dante-devices', danteDevices);
     } else if (data.type === 'status') {

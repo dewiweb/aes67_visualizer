@@ -113,14 +113,14 @@ const StreamCard: React.FC<StreamCardProps> = ({
           </div>
         )}
         
-        {stream.sourceType === 'sap' ? (
-          <Radio size={14} className="text-blue-400 shrink-0" />
-        ) : stream.sourceType === 'dante' ? (
-          <Radio size={14} className="text-purple-400 shrink-0" />
-        ) : stream.sourceType === 'ravenna' ? (
-          <Radio size={14} className="text-teal-400 shrink-0" />
-        ) : (
+        {stream.sourceType === 'manual' ? (
           <FileText size={14} className="text-green-400 shrink-0" />
+        ) : stream.dante && stream.danteDevice?.isRAVENNA ? (
+          <Radio size={14} className="text-teal-400 shrink-0" />
+        ) : stream.dante ? (
+          <Radio size={14} className="text-purple-400 shrink-0" />
+        ) : (
+          <Radio size={14} className="text-blue-400 shrink-0" />
         )}
         
         <span className="font-medium text-sm truncate flex-1" title={stream.name}>
