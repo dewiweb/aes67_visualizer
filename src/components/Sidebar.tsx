@@ -47,9 +47,12 @@ const Sidebar: React.FC<SidebarProps> = ({
   const sapStreams = streams.filter((s) => s.sourceType === 'sap');
   const manualStreams = streams.filter((s) => s.sourceType === 'manual');
 
-  // Count unique devices (SAP-based + pure Dante mDNS)
-  const sapDeviceCount = new Set(streams.map(s => s.deviceIp || s.sapSourceIp || 'unknown')).size;
-  const deviceCount = sapDeviceCount + danteDevices.length;
+  // Count unique devices: union of all known IPs across mDNS and SAP sources
+  const deviceIpSet = new Set<string>([
+    ...danteDevices.map(d => d.ip).filter(Boolean),
+    ...streams.map(s => s.deviceIp || s.sapSourceIp).filter(Boolean) as string[],
+  ]);
+  const deviceCount = deviceIpSet.size;
 
   return (
     <aside className="w-80 bg-slate-800 border-r border-slate-700 flex flex-col shrink-0 overflow-hidden">
