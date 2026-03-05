@@ -625,6 +625,29 @@ async function probeRtspIp(ip, streamNames = []) {
   }
 }
 
+/**
+ * Probe Dante ARC on a SAP-discovered IP (not from mDNS)
+ * Sends result as dante-devices update if device responds
+ */
+async function probeArcIp(ip) {
+  const result = await danteArcQuery(ip, 4440, 2000);
+  if (!result) return;
+
+  console.log(`[ARC Probe] ${ip}: name="${result.deviceName || '-'}" model="${result.model || '-'}" ${result.txChannels ?? '?'}TX/${result.rxChannels ?? '?'}RX`);
+
+  // Register as a device (keyed by IP since no mDNS host)
+  const existing = devices.get(ip) || { host: ip, addresses: [ip], port: 4440 };
+  if (result.deviceName)               existing.name       = result.deviceName;
+  if (result.model)                    existing.model      = result.model;
+  if (result.txChannels !== undefined) existing.txChannels = result.txChannels;
+  if (result.rxChannels !== undefined) existing.rxChannels = result.rxChannels;
+  existing.isDante      = true;
+  existing.protocolFamily = 'dante';
+  existing.manufacturer   = 'Audinate';
+  devices.set(ip, existing);
+  scheduleUpdate();
+}
+
 // IPC message handler
 process.on('message', (msg) => {
   switch (msg.type) {
@@ -639,6 +662,9 @@ process.on('message', (msg) => {
       break;
     case 'probe-rtsp':
       probeRtspIp(msg.ip, msg.streamNames || []);
+      break;
+    case 'probe-arc':
+      probeArcIp(msg.ip);
       break;
   }
 });
