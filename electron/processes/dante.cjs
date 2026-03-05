@@ -100,42 +100,60 @@ function rtspDescribe(ip, port, timeout = 3000) {
   return new Promise((resolve) => {
     const socket = new net.Socket();
     let buffer = '';
-    const cseq = 1;
 
-    const timer = setTimeout(() => {
+    const done = (result) => {
+      clearTimeout(timer);
       socket.destroy();
-      resolve(null);
-    }, timeout);
+      resolve(result);
+    };
+
+    const timer = setTimeout(() => done(null), timeout);
 
     socket.connect(port, ip, () => {
-      const req = [
+      socket.write([
         `DESCRIBE rtsp://${ip}:${port}/ RTSP/1.0`,
-        `CSeq: ${cseq}`,
+        'CSeq: 1',
         'Accept: application/sdp',
         '',
         '',
-      ].join('\r\n');
-      socket.write(req);
+      ].join('\r\n'));
     });
 
     socket.on('data', (data) => {
       buffer += data.toString();
-      // Wait for end of RTSP response (blank line after headers + body)
-      if (buffer.includes('\r\n\r\n')) {
-        clearTimeout(timer);
-        socket.destroy();
 
-        // Extract SDP body after the double CRLF
-        const bodyStart = buffer.indexOf('\r\n\r\n') + 4;
-        const sdpBody = buffer.slice(bodyStart).trim();
-        resolve(sdpBody.length > 0 ? sdpBody : null);
+      // Wait until we have the full headers (double CRLF)
+      const headerEnd = buffer.indexOf('\r\n\r\n');
+      if (headerEnd === -1) return;
+
+      const headers = buffer.slice(0, headerEnd);
+      const body = buffer.slice(headerEnd + 4);
+
+      // Check RTSP status line
+      const statusMatch = headers.match(/^RTSP\/1\.0\s+(\d+)/);
+      if (statusMatch && statusMatch[1] !== '200') {
+        // Non-200 response (e.g. 401, 404) — no SDP
+        return done(null);
       }
+
+      // Get Content-Length to know when body is complete
+      const clMatch = headers.match(/Content-Length:\s*(\d+)/i);
+      const contentLength = clMatch ? parseInt(clMatch[1]) : 0;
+
+      if (contentLength === 0) {
+        // No body expected — some devices send SDP without Content-Length
+        const sdp = body.trim();
+        return done(sdp.startsWith('v=') ? sdp : null);
+      }
+
+      if (Buffer.byteLength(body) >= contentLength) {
+        const sdp = body.slice(0, contentLength).trim();
+        return done(sdp.startsWith('v=') ? sdp : null);
+      }
+      // else: wait for more data (handled by next 'data' event)
     });
 
-    socket.on('error', () => {
-      clearTimeout(timer);
-      resolve(null);
-    });
+    socket.on('error', () => done(null));
   });
 }
 
