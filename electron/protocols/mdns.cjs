@@ -65,45 +65,73 @@ function lookupService(name, serviceType, family, onUp) {
   let buffer = '';
   const timer = setTimeout(() => proc.kill(), 5000);
 
+  let pendingHost = null;
+  let pendingPort = 0;
+
   proc.stdout.on('data', (data) => {
     buffer += data.toString();
     const lines = buffer.split('\n');
     buffer = lines.pop();
 
     for (const line of lines) {
-      // "  <name> can be reached at <host>:<port> (interface N)"
-      const reachMatch = line.match(/can be reached at ([\w.-]+):?(\d+)/i);
-      if (!reachMatch) continue;
-
-      const host = reachMatch[1];
-      const port = parseInt(reachMatch[2]) || 0;
-
-      // Extract TXT key=value pairs from the rest of the line
-      const afterHost = line.slice(line.indexOf(reachMatch[0]) + reachMatch[0].length).trim();
-      const txt = {};
-      for (const kv of afterHost.replace(/\(.*?\)/g, '').trim().split(/\s+/)) {
-        const eq = kv.indexOf('=');
-        if (eq > 0) txt[kv.slice(0, eq)] = kv.slice(eq + 1);
+      // Line 1: "  <name> can be reached at <host>:<port> (interface N)"
+      const reachMatch = line.match(/can be reached at ([\w.-]+):(\d+)/i);
+      if (reachMatch) {
+        pendingHost = reachMatch[1];
+        pendingPort = parseInt(reachMatch[2]) || 0;
+        continue;
       }
 
-      clearTimeout(timer);
-      proc.kill();
+      // Line 2 (immediately after): TXT key=value pairs
+      // e.g. " arcp_vers=2.8.9 mf=Powersoft model=X router_info=Audinate\ DCM"
+      if (pendingHost && line.trim() && !line.match(/^\s*Lookup/i)) {
+        const txt = {};
+        // Split on whitespace but not escaped spaces (backslash-space)
+        const raw = line.trim().replace(/\\\s/g, '\u00A0'); // temporarily replace "\ " with NBSP
+        for (const kv of raw.split(/\s+/)) {
+          const eq = kv.indexOf('=');
+          if (eq > 0) {
+            const key = kv.slice(0, eq);
+            const val = kv.slice(eq + 1).replace(/\u00A0/g, ' '); // restore spaces
+            txt[key] = val;
+          }
+        }
 
-      resolveHost(host, (ip) => {
-        onUp({
-          name,
-          type:      serviceType,
-          host,
-          addresses: ip ? [ip] : [],
-          port,
-          txt,
-          family,
+        const host = pendingHost;
+        const port = pendingPort;
+        pendingHost = null;
+        pendingPort = 0;
+
+        clearTimeout(timer);
+        proc.kill();
+
+        resolveHost(host, (ip) => {
+          onUp({
+            name,
+            type:      serviceType,
+            host,
+            addresses: ip ? [ip] : [],
+            port,
+            txt,
+            family,
+          });
         });
-      });
+      }
     }
   });
 
-  proc.on('close', () => { clearTimeout(timer); });
+  proc.on('close', () => {
+    clearTimeout(timer);
+    // If we got a host but no TXT line came (e.g. device has no TXT records), still emit
+    if (pendingHost) {
+      const host = pendingHost;
+      const port = pendingPort;
+      pendingHost = null;
+      resolveHost(host, (ip) => {
+        onUp({ name, type: serviceType, host, addresses: ip ? [ip] : [], port, txt: {}, family });
+      });
+    }
+  });
   proc.stderr.on('data', () => {});
   return proc;
 }

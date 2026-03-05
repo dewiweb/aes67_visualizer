@@ -43,17 +43,43 @@ function parseService(service) {
   };
 
   if (family === 'dante') {
+    // Normalise manufacturer field — some firmwares have typos
+    const rawMf = txt.mf || txt.manufacturer || '';
+    const manufacturer = rawMf
+      .replace(/Powersft/i, 'Powersoft')
+      .replace(/Amadeus/i,  'Amadeus (Holophonix)') ||
+      'Audinate';
+
+    // Clean model field (Powersoft sends a numeric ID like _0000000700000003)
+    const rawModel = txt.model || null;
+    const model = rawModel && rawModel.startsWith('_') ? null : rawModel;
+
+    // Detect AES67 mode from various fields
+    const routerInfo = (txt.router_info || '').toLowerCase();
+    const isAES67 = txt.aes67 === '1' || txt.aes67 === 'true' ||
+                    routerInfo.includes('aes67') ||
+                    routerInfo.includes('danteep'); // Dante Embedded Platform (Holophonix)
+
+    // Detect software
+    let software = null;
+    if (routerInfo.includes('dante via')) software = 'Dante Via';
+    else if (routerInfo.includes('danteep')) software = 'Dante Embedded Platform';
+    else if (routerInfo.includes('dcm')) software = `Dante Controller Module (${txt.router_vers || ''})`.trim();
+
     return {
       ...base,
-      model:        txt.model || null,
-      manufacturer: txt.mf || txt.manufacturer || 'Audinate',
+      model,
+      manufacturer,
       sampleRate:   txt.rate ? parseInt(txt.rate) : 48000,
       txChannels:   txt.txc  ? parseInt(txt.txc)  : null,
       rxChannels:   txt.rxc  ? parseInt(txt.rxc)  : null,
       isDante:      true,
-      isAES67:      txt.aes67 === '1' || txt.aes67 === 'true',
+      isAES67,
       isRAVENNA:    false,
-      software:     txt.router_info === '"Dante Via"' ? 'Dante Via' : null,
+      software,
+      routerInfo:   txt.router_info || null,
+      routerVers:   txt.router_vers || null,
+      arcpVers:     txt.arcp_vers  || null,
     };
   }
 
@@ -102,12 +128,21 @@ function scheduleUpdate() {
 // ─── mDNS callbacks ──────────────────────────────────────────────────────────
 
 function onServiceUp(service) {
-  console.log(`[Discovery] Found: ${service.name} (${service.type || service.family})`);
+  const txt = service.txt || {};
+  console.log(`[Discovery] Found: ${service.name} (${service.type || service.family}) host=${service.host} ip=${(service.addresses||[]).join(',')} txt=${JSON.stringify(txt)}`);
 
   const device   = parseService(service);
   const existing = devices.get(service.host);
 
-  devices.set(service.host, existing ? { ...existing, ...device } : device);
+  // Merge: keep best data from multiple service types for same host
+  const merged = existing ? { ...existing, ...device } : device;
+  // Never lose addresses or channel counts from previous records
+  if (existing) {
+    if (!merged.addresses.length && existing.addresses.length) merged.addresses = existing.addresses;
+    if (merged.txChannels === null && existing.txChannels !== null) merged.txChannels = existing.txChannels;
+    if (merged.rxChannels === null && existing.rxChannels !== null) merged.rxChannels = existing.rxChannels;
+  }
+  devices.set(service.host, merged);
   scheduleUpdate();
 
   if (!existing) {
