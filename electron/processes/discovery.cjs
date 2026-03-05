@@ -15,9 +15,10 @@
 
 'use strict';
 
-const arc  = require('../protocols/arc.cjs');
-const rtsp = require('../protocols/rtsp.cjs');
-const mdns = require('../protocols/mdns.cjs');
+const arc     = require('../protocols/arc.cjs');
+const rtsp    = require('../protocols/rtsp.cjs');
+const mdns    = require('../protocols/mdns.cjs');
+const ravenna = require('../protocols/ravenna.cjs');
 
 // Device registry: host/ip → device info
 const devices   = new Map();
@@ -57,19 +58,7 @@ function parseService(service) {
   }
 
   if (family === 'ravenna' || family === 'aes67') {
-    return {
-      ...base,
-      model:          txt.model || txt.dname || null,
-      manufacturer:   txt.mf || txt.manufacturer || null,
-      sampleRate:     txt.sr ? parseInt(txt.sr) : 48000,
-      txChannels:     txt.src ? parseInt(txt.src) : null,
-      rxChannels:     txt.snk ? parseInt(txt.snk) : null,
-      ptpGrandmaster: txt.ptp || null,
-      isDante:        false,
-      isAES67:        true,
-      isRAVENNA:      family === 'ravenna',
-      software:       txt.ver || null,
-    };
+    return ravenna.parseDevice(service.name, service.host, service.addresses || [], service.port, txt);
   }
 
   return base;
@@ -169,11 +158,14 @@ async function enrichWithRtsp(device, streamNames = []) {
   const ip = device.addresses.find(a => a.includes('.'));
   if (!ip) return;
 
-  const result = await rtsp.probe(ip, streamNames);
+  // Use ravenna.cjs to build the ordered path candidates
+  const paths  = ravenna.buildRtspPaths(streamNames);
+  const port   = device.port || ravenna.RTSP_PORT;
+  const result = await rtsp.describe(ip, port, streamNames, 5000);
   if (!result) return;
 
   console.log(`[RTSP] SDP from ${device.name} (${ip})`);
-  process.send({ type: 'ravenna-sdp', name: device.name, sdp: result.sdp, sourceIp: ip });
+  process.send({ type: 'ravenna-sdp', name: device.name, sdp: result, sourceIp: ip });
 }
 
 // ─── IP-based probes (triggered from SAP source IPs) ─────────────────────────
