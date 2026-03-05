@@ -1,49 +1,40 @@
 /**
  * Network Audio Discovery Child Process
- * Uses mDNS/DNS-SD (Bonjour) to discover Dante, RAVENNA and AES67 devices
- * Based on network-audio-controller approach
+ * Uses dns-sd.exe (Apple Bonjour native) to discover Dante, RAVENNA and AES67 devices
+ * Falls back to bonjour-service npm if dns-sd.exe is not available
  */
 
-const Bonjour = require('bonjour-service').default;
+const { spawn } = require('child_process');
 const crypto = require('crypto');
 const net = require('net');
 const dgram = require('dgram');
 
-// Dante mDNS service types — type/protocol separated (bonjour-service adds _ prefix itself)
-const DANTE_SERVICES = [
-  { type: 'netaudio-arc', protocol: 'udp' },  // Audio Routing Control
-  { type: 'netaudio-cmc', protocol: 'udp' },  // Clocking/Management Control
-  { type: 'netaudio-dbc', protocol: 'udp' },  // Device Browser Control
+// All mDNS service types to browse — full DNS-SD format
+const ALL_SERVICES = [
+  { type: '_netaudio-arc._udp',     family: 'dante'   },
+  { type: '_netaudio-cmc._udp',     family: 'dante'   },
+  { type: '_netaudio-dbc._udp',     family: 'dante'   },
+  { type: '_ravenna._tcp',          family: 'ravenna'  },
+  { type: '_ravenna-session._tcp',  family: 'ravenna'  },
+  { type: '_aes67._udp',            family: 'aes67'    },
 ];
 
-// RAVENNA / AES67 mDNS service types
-const RAVENNA_SERVICES = [
-  { type: 'ravenna',          protocol: 'tcp' },  // RAVENNA device discovery
-  { type: 'ravenna-session',  protocol: 'tcp' },  // RAVENNA session announcement
-];
-
-const AES67_SERVICES = [
-  { type: 'aes67', protocol: 'udp' },  // AES67 device discovery
-];
-
-// For family detection, service.type returned by bonjour-service is the name without _ or protocol
-const DANTE_TYPE_NAMES  = DANTE_SERVICES.map(s => s.type);
-const RAVENNA_TYPE_NAMES = RAVENNA_SERVICES.map(s => s.type);
-const AES67_TYPE_NAMES  = AES67_SERVICES.map(s => s.type);
-
-let bonjour = null;
-let browsers = [];
+let dnsSdProcs = [];
+let resolveProcs = [];
 let devices = new Map(); // hostname -> device info
 let updateTimer = null;
 
 /**
- * Detect protocol family from service type name (as returned by bonjour-service, no underscores)
+ * Detect protocol family from full service type string
  */
-function getProtocolFamily(serviceType) {
-  if (DANTE_TYPE_NAMES.includes(serviceType))   return 'dante';
-  if (RAVENNA_TYPE_NAMES.includes(serviceType)) return 'ravenna';
-  if (AES67_TYPE_NAMES.includes(serviceType))   return 'aes67';
-  return 'unknown';
+function getProtocolFamily(fullType) {
+  const svc = ALL_SERVICES.find(s => fullType.startsWith(s.type.split('.')[0].replace('_', '')));
+  if (!svc) {
+    if (fullType.includes('netaudio')) return 'dante';
+    if (fullType.includes('ravenna'))  return 'ravenna';
+    if (fullType.includes('aes67'))    return 'aes67';
+  }
+  return svc ? svc.family : 'unknown';
 }
 
 /**
@@ -312,51 +303,160 @@ function onServiceDown(service) {
 }
 
 /**
- * Initialize mDNS browsing for Dante, RAVENNA and AES67
+ * Parse dns-sd.exe -B browse output line
+ * Format: "Add  <flags> <if> <domain> <type>       <instance>"
  */
-function init() {
-  if (bonjour) {
-    stop();
-  }
+function parseBrowseLine(line, serviceType, family) {
+  // dns-sd -B output: Add  2  5 local. _netaudio-arc._udp. Device\ Name
+  const match = line.match(/^Add\s+\d+\s+\d+\s+(\S+)\s+(\S+)\s+(.+)$/);
+  if (!match) return;
 
-  try {
-    bonjour = new Bonjour();
-    
-    console.log('[Discovery] Starting mDNS discovery (Dante + RAVENNA + AES67)...');
-    
-    const allServices = [...DANTE_SERVICES, ...RAVENNA_SERVICES, ...AES67_SERVICES];
+  const domain  = match[1].replace(/\.$/, '');
+  const type    = match[2].replace(/\.$/, '');
+  const name    = match[3].trim().replace(/\\ /g, ' ');
 
-    for (const svc of allServices) {
-      const browser = bonjour.find({ type: svc.type, protocol: svc.protocol }, onServiceUp);
-      browsers.push(browser);
-      console.log(`[Discovery] Browsing for _${svc.type}._${svc.protocol}`);
-    }
-
-    process.send({ type: 'status', status: 'browsing' });
-  } catch (e) {
-    console.error('[Discovery] Init error:', e.message);
-    process.send({ type: 'error', message: e.message });
-  }
+  // Trigger a resolve to get host + port + txt
+  resolveService(name, serviceType, family);
 }
 
 /**
- * Stop mDNS browsing
+ * Resolve a service instance via dns-sd.exe -L
+ * Extracts host, port, txt records
+ */
+function resolveService(name, serviceType, family) {
+  const proc = spawn('dns-sd', ['-L', name, serviceType, 'local'], { windowsHide: true });
+  resolveProcs.push(proc);
+
+  let buffer = '';
+  const timer = setTimeout(() => proc.kill(), 5000);
+
+  proc.stdout.on('data', (data) => {
+    buffer += data.toString();
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+
+    for (const line of lines) {
+      // Line format: "  instance can be reached at host.local.:port (interface N)"
+      // TXT records: "  key=value key2=value2 ..."
+      const reachMatch = line.match(/can be reached at ([\w.-]+):?(\d+)/i);
+      if (reachMatch) {
+        const host = reachMatch[1];
+        const port = parseInt(reachMatch[2]) || 0;
+
+        // Extract TXT records from same line
+        const txtRaw = line.replace(/.*can be reached at.*?(?=\s+[a-z]+=|$)/i, '').trim();
+        const txt = {};
+        for (const kv of txtRaw.split(/\s+/)) {
+          const eq = kv.indexOf('=');
+          if (eq > 0) txt[kv.slice(0, eq)] = kv.slice(eq + 1);
+        }
+
+        // Resolve host to IP via dns-sd -G
+        resolveHostToIP(host, (ip) => {
+          onServiceUp({
+            name,
+            type: serviceType.split('.')[0].replace('_', ''),
+            host,
+            addresses: ip ? [ip] : [],
+            port,
+            txt,
+            family,
+          });
+        });
+
+        clearTimeout(timer);
+        proc.kill();
+      }
+    }
+  });
+
+  proc.on('close', () => {
+    clearTimeout(timer);
+    const idx = resolveProcs.indexOf(proc);
+    if (idx >= 0) resolveProcs.splice(idx, 1);
+  });
+
+  proc.stderr.on('data', () => {});
+}
+
+/**
+ * Resolve a .local hostname to IPv4 via dns-sd -G v4
+ */
+function resolveHostToIP(host, callback) {
+  const proc = spawn('dns-sd', ['-G', 'v4', host], { windowsHide: true });
+  let resolved = false;
+  const timer = setTimeout(() => { if (!resolved) { resolved = true; proc.kill(); callback(null); } }, 3000);
+
+  proc.stdout.on('data', (data) => {
+    if (resolved) return;
+    const text = data.toString();
+    // Line: "Timestamp    Host         Flags  IF  Address       TTL"
+    //        "9:00:00.000  host.local.  2      5   192.168.1.10  120"
+    const match = text.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+    if (match) {
+      resolved = true;
+      clearTimeout(timer);
+      proc.kill();
+      callback(match[1]);
+    }
+  });
+
+  proc.on('close', () => { if (!resolved) { resolved = true; callback(null); } });
+  proc.stderr.on('data', () => {});
+}
+
+/**
+ * Initialize mDNS browsing using dns-sd.exe (Apple Bonjour native)
+ */
+function init() {
+  stop();
+
+  console.log('[Discovery] Starting mDNS discovery via dns-sd.exe (Dante + RAVENNA + AES67)...');
+
+  for (const svc of ALL_SERVICES) {
+    console.log(`[Discovery] Browsing for ${svc.type}`);
+
+    const proc = spawn('dns-sd', ['-B', svc.type, 'local'], { windowsHide: true });
+    dnsSdProcs.push(proc);
+
+    let buffer = '';
+    proc.stdout.on('data', (data) => {
+      buffer += data.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (line.startsWith('Add')) {
+          parseBrowseLine(line, svc.type, svc.family);
+        } else if (line.startsWith('Rmv')) {
+          // Service removed — extract name and remove from map
+          const match = line.match(/^Rmv\s+\d+\s+\d+\s+\S+\s+\S+\s+(.+)$/);
+          if (match) onServiceDown({ name: match[1].trim(), host: match[1].trim() });
+        }
+      }
+    });
+
+    proc.stderr.on('data', () => {});
+    proc.on('close', (code) => {
+      const idx = dnsSdProcs.indexOf(proc);
+      if (idx >= 0) dnsSdProcs.splice(idx, 1);
+      if (code !== null && code !== 0) {
+        console.error(`[Discovery] dns-sd exited with code ${code} for ${svc.type}`);
+      }
+    });
+  }
+
+  process.send({ type: 'status', status: 'browsing' });
+}
+
+/**
+ * Stop all dns-sd processes
  */
 function stop() {
-  for (const browser of browsers) {
-    try {
-      browser.stop();
-    } catch (e) { /* ignore */ }
+  for (const proc of [...dnsSdProcs, ...resolveProcs]) {
+    try { proc.kill(); } catch (e) { /* ignore */ }
   }
-  browsers = [];
-  
-  if (bonjour) {
-    try {
-      bonjour.destroy();
-    } catch (e) { /* ignore */ }
-    bonjour = null;
-  }
-  
+  dnsSdProcs = [];
+  resolveProcs = [];
   devices.clear();
   console.log('[Dante] Stopped');
 }
@@ -366,7 +466,6 @@ function stop() {
  */
 function refresh() {
   console.log('[Dante] Refreshing...');
-  devices.clear();
   stop();
   init();
 }

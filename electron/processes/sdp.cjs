@@ -207,7 +207,7 @@ function handleSapMessage(message, rinfo) {
 
   if (isNew) {
     const s = sessions[id];
-    console.log(`[SDP] New stream: ${s.name || id} (${s.mcast}:${s.port})`);
+    console.log(`[SDP] New stream: ${s.name || id} | mcast=${s.mcast}:${s.port} | src=${s.deviceIp || s.sapSourceIp || '?'} | tool=${s.tool || '-'}`);
     if (s.ptpGrandmaster) {
       console.log(`[SDP] PTP: ${s.ptpVersion} GM=${s.ptpGrandmaster} Domain=${s.ptpDomain}`);
     }
