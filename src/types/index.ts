@@ -72,6 +72,8 @@ export interface DanteDevice {
   sampleRate: number;
   txChannels: number | null;
   rxChannels: number | null;
+  txChannelNames: { id: number; name: string }[];
+  rxChannelNames: { id: number; name: string; txChannelName: string | null; txHost: string | null; subscribed: boolean }[];
   isDante: boolean;
   isAES67: boolean;
   isRAVENNA: boolean;

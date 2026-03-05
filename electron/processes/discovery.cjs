@@ -90,9 +90,11 @@ function sendUpdate() {
       manufacturer:   device.manufacturer  || (device.isDante ? 'Audinate' : null),
       model:          device.model         || null,
       sampleRate:     device.sampleRate    || 48000,
-      txChannels:     device.txChannels    ?? null,
-      rxChannels:     device.rxChannels    ?? null,
-      isDante:        device.isDante       !== false,
+      txChannels:      device.txChannels     ?? null,
+      rxChannels:      device.rxChannels     ?? null,
+      txChannelNames:  device.txChannelNames || [],
+      rxChannelNames:  device.rxChannelNames || [],
+      isDante:         device.isDante        !== false,
       isAES67:        device.isAES67       || false,
       isRAVENNA:      device.isRAVENNA     || false,
       software:       device.software      || null,
@@ -177,12 +179,13 @@ async function enrichWithRtsp(device, streamNames = []) {
 // ─── IP-based probes (triggered from SAP source IPs) ─────────────────────────
 
 async function probeArcIp(ip) {
-  const result = await arc.query(ip, arc.DEFAULT_PORT);
+  const port   = arc.DEFAULT_PORT;
+  const result = await arc.query(ip, port);
   if (!result) return;
 
   console.log(`[ARC Probe] ${ip}: name="${result.deviceName || '-'}" model="${result.model || '-'}" ${result.txChannels ?? '?'}TX/${result.rxChannels ?? '?'}RX`);
 
-  const existing = devices.get(ip) || { host: ip, addresses: [ip], port: arc.DEFAULT_PORT };
+  const existing = devices.get(ip) || { host: ip, addresses: [ip], port };
   if (result.deviceName)               existing.name       = result.deviceName;
   if (result.model)                    existing.model      = result.model;
   if (result.txChannels !== undefined) existing.txChannels = result.txChannels;
@@ -193,6 +196,33 @@ async function probeArcIp(ip) {
 
   devices.set(ip, existing);
   scheduleUpdate();
+
+  // Fetch TX and RX channel names in parallel (non-blocking — update again when done)
+  const txCount = result.txChannels || 0;
+  const rxCount = result.rxChannels || 0;
+  if (txCount > 0 || rxCount > 0) {
+    const [txChs, rxChs] = await Promise.all([
+      txCount > 0 ? arc.getTxChannels(ip, port, txCount) : Promise.resolve([]),
+      rxCount > 0 ? arc.getRxChannels(ip, port, rxCount) : Promise.resolve([]),
+    ]);
+
+    const stored = devices.get(ip);
+    if (stored) {
+      if (txChs.length > 0) {
+        stored.txChannelNames = txChs;
+        console.log(`[ARC Probe] ${ip} TX channels: ${txChs.slice(0, 4).map(c => c.name || `ch${c.id}`).join(', ')}${txChs.length > 4 ? '...' : ''}`);
+      }
+      if (rxChs.length > 0) {
+        stored.rxChannelNames = rxChs;
+        const subscribed = rxChs.filter(c => c.subscribed);
+        if (subscribed.length > 0) {
+          console.log(`[ARC Probe] ${ip} RX subscriptions: ${subscribed.slice(0, 4).map(c => `${c.name}←${c.txHost || '?'}`).join(', ')}`);
+        }
+      }
+      devices.set(ip, stored);
+      scheduleUpdate();
+    }
+  }
 }
 
 async function probeRtspIp(ip, streamNames = []) {
