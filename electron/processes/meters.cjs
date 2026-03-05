@@ -67,7 +67,9 @@ function startMonitoring(stream) {
       processRtpPacket(buffer, monitor);
     });
 
-    socket.bind({ port, address: currentInterface, exclusive: false }, () => {
+    // Bind on 0.0.0.0:port (not interface IP) so multiple streams sharing
+    // the same port (e.g. 5004) can coexist. addMembership filters by mcast group.
+    socket.bind({ port, exclusive: false }, () => {
       try {
         socket.addMembership(mcast, currentInterface);
         console.log(`[Meters] Started monitoring ${stream.name || id} (${mcast}:${port})`);
