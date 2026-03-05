@@ -8,13 +8,16 @@
 
 const dgram = require('dgram');
 
-// Protocol constants
+// Protocol constants — from Inferno (gitlab.com/lumifaza/inferno) + network-audio-controller
 const PROTOCOL_ID          = 0x27FF;
-const OPCODE_CHANNEL_COUNT = 0x1000;
-const OPCODE_DEVICE_NAME   = 0x1002;
-const OPCODE_DEVICE_INFO   = 0x1003;
+const OPCODE_CHANNEL_COUNT = 0x1000; // tx_channels_count(2) + rx_channels_count(2) + ...
+const OPCODE_DEVICE_NAME   = 0x1002; // null-terminated device name
+const OPCODE_DEVICE_INFO   = 0x1003; // board_name, revision, friendly_hostname (string pointer table)
+const OPCODE_TX_CHANNELS   = 0x2000; // TX channel list: channel_id(2) + unknown(2) + common_offset(2) + name_offset(2)
+const OPCODE_TX_CHAN_NAMES  = 0x2010; // TX channel friendly names
+const OPCODE_RX_CHANNELS   = 0x3000; // RX channel list + subscription status
 const RESULT_SUCCESS       = 0x0001;
-const RESULT_SUCCESS_EXT   = 0x8112;
+const RESULT_SUCCESS_EXT   = 0x8112; // more pages available (paginated response)
 
 const DEFAULT_PORT    = 4440;
 const DEFAULT_TIMEOUT = 800;
@@ -61,8 +64,51 @@ function sendRequest(ip, port, packet, timeout = DEFAULT_TIMEOUT) {
  * Parse null-terminated UTF-8 string from buffer at offset
  */
 function readString(buf, offset = 0) {
+  if (offset < 0 || offset >= buf.length) return '';
   const end = buf.indexOf(0, offset);
   return buf.slice(offset, end >= 0 ? end : undefined).toString('utf8').trim();
+}
+
+/**
+ * Resolve a string pointer (absolute offset from start of full packet)
+ * Inferno: string pointers are absolute offsets into the full response buffer
+ */
+function readStringAtPointer(buf, pointer) {
+  // Pointers are absolute offsets in the full packet; body starts at offset 10
+  const offset = pointer - 10;
+  return readString(buf, offset);
+}
+
+/**
+ * Parse paginated ARC channel list response body.
+ * Body layout (Inferno proto_arc.rs serialize_items):
+ *   byte 0: space_items (max per page)
+ *   byte 1: actual_items count
+ *   then: actual_items × record structs
+ *   then: string heap
+ */
+function parsePaginatedBody(body, recordSize, parseRecord) {
+  if (body.length < 2) return [];
+  const count = body[1];
+  const records = [];
+  for (let i = 0; i < count; i++) {
+    const offset = 2 + i * recordSize;
+    if (offset + recordSize > body.length) break;
+    records.push(parseRecord(body, offset));
+  }
+  return records;
+}
+
+/**
+ * Build paginated query payload: page offset encoded as start index
+ * Inferno extract_start_index: bytes[2:4] = start_index + 1
+ */
+function paginatePayload(startIndex = 0) {
+  const buf = Buffer.alloc(8, 0);
+  buf.writeUInt16BE(0x0000, 0);
+  buf.writeUInt16BE(0x0001, 2); // page request flag
+  buf.writeUInt16BE(startIndex + 1, 4); // 1-based start index
+  return buf;
 }
 
 /**
@@ -109,4 +155,74 @@ async function query(ip, port = DEFAULT_PORT, timeout = DEFAULT_TIMEOUT) {
   return (result.txChannels !== undefined || result.deviceName) ? result : null;
 }
 
-module.exports = { query, DEFAULT_PORT };
+/**
+ * Fetch TX channel names from a Dante device.
+ * Returns array of { id, name } or [] on failure.
+ * Uses OPCODE_TX_CHANNELS (0x2000) — paginated, 16 channels per page.
+ */
+async function getTxChannels(ip, port = DEFAULT_PORT, txCount = 0, timeout = DEFAULT_TIMEOUT) {
+  const channels = [];
+  const pages = Math.max(1, Math.ceil(txCount / 16));
+
+  for (let page = 0; page < pages; page++) {
+    const payload = paginatePayload(page * 16);
+    const raw = await sendRequest(ip, port, buildRequest(OPCODE_TX_CHANNELS, payload), timeout * 2);
+    if (!raw || raw.length < 12) break;
+
+    const rc = raw.readUInt16BE(8);
+    if (rc !== RESULT_SUCCESS && rc !== RESULT_SUCCESS_EXT) break;
+
+    const body = raw.slice(10);
+    // TX channel descriptor: channel_id(2) + unknown(2) + common_offset(2) + name_offset(2) = 8 bytes
+    const parsed = parsePaginatedBody(body, 8, (buf, off) => {
+      const channelId  = buf.readUInt16BE(off);
+      const namePtr    = buf.readUInt16BE(off + 6);
+      const name       = namePtr > 0 ? readStringAtPointer(buf, namePtr) : '';
+      return { id: channelId, name };
+    });
+    channels.push(...parsed);
+    if (rc !== RESULT_SUCCESS_EXT) break;
+  }
+  return channels;
+}
+
+/**
+ * Fetch RX channel names + subscription status from a Dante device.
+ * Returns array of { id, name, txChannelName, txHost, subscribed } or [] on failure.
+ * Uses OPCODE_RX_CHANNELS (0x3000) — paginated.
+ */
+async function getRxChannels(ip, port = DEFAULT_PORT, rxCount = 0, timeout = DEFAULT_TIMEOUT) {
+  const channels = [];
+  const pages = Math.max(1, Math.ceil(rxCount / 16));
+
+  for (let page = 0; page < pages; page++) {
+    const payload = paginatePayload(page * 16);
+    const raw = await sendRequest(ip, port, buildRequest(OPCODE_RX_CHANNELS, payload), timeout * 2);
+    if (!raw || raw.length < 12) break;
+
+    const rc = raw.readUInt16BE(8);
+    if (rc !== RESULT_SUCCESS && rc !== RESULT_SUCCESS_EXT) break;
+
+    const body = raw.slice(10);
+    // RX channel descriptor: channel_id(2)+unk(2)+common_offset(2)+tx_ch_name_offset(2)+tx_host_offset(2)+friendly_offset(2)+status(4)+unk(4) = 20 bytes
+    const parsed = parsePaginatedBody(body, 20, (buf, off) => {
+      const channelId      = buf.readUInt16BE(off);
+      const txChNamePtr    = buf.readUInt16BE(off + 6);
+      const txHostPtr      = buf.readUInt16BE(off + 8);
+      const friendlyPtr    = buf.readUInt16BE(off + 10);
+      const status         = buf.readUInt32BE(off + 12);
+      return {
+        id:           channelId,
+        name:         friendlyPtr > 0 ? readStringAtPointer(buf, friendlyPtr) : '',
+        txChannelName: txChNamePtr > 0 ? readStringAtPointer(buf, txChNamePtr) : null,
+        txHost:        txHostPtr   > 0 ? readStringAtPointer(buf, txHostPtr)   : null,
+        subscribed:    (status & 0xFF) === 0x09 || (status & 0xFF) === 0x0A,
+      };
+    });
+    channels.push(...parsed);
+    if (rc !== RESULT_SUCCESS_EXT) break;
+  }
+  return channels;
+}
+
+module.exports = { query, getTxChannels, getRxChannels, DEFAULT_PORT };

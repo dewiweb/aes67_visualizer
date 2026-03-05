@@ -9,13 +9,16 @@
 const { spawn } = require('child_process');
 
 // mDNS service types and their protocol families
+// Sources: network-audio-controller, Inferno (gitlab.com/lumifaza/inferno)
 const SERVICES = [
-  { type: '_netaudio-arc._udp', family: 'dante'   },
-  { type: '_netaudio-cmc._udp', family: 'dante'   },
-  { type: '_netaudio-dbc._udp', family: 'dante'   },
-  { type: '_ravenna._tcp',      family: 'ravenna'  },
-  { type: '_ravenna-session._tcp', family: 'ravenna' },
-  { type: '_aes67._udp',        family: 'aes67'    },
+  { type: '_netaudio-arc._udp',  family: 'dante',  role: 'control'  }, // ARC: device info, channels, subscriptions (port 4440)
+  { type: '_netaudio-cmc._udp',  family: 'dante',  role: 'clock'    }, // CMC: clock domain management
+  { type: '_netaudio-dbc._udp',  family: 'dante',  role: 'control'  }, // DBC: Dante Broadway Control
+  { type: '_netaudio-chan._udp', family: 'dante',  role: 'channel'  }, // per-TX-channel announcement: "ChannelName@Hostname"
+  { type: '_netaudio-bund._udp', family: 'dante',  role: 'bundle'   }, // multicast bundles (flows)
+  { type: '_ravenna._tcp',       family: 'ravenna', role: 'device'  },
+  { type: '_ravenna-session._tcp', family: 'ravenna', role: 'stream' },
+  { type: '_aes67._udp',         family: 'aes67',   role: 'device'  },
 ];
 
 /**
