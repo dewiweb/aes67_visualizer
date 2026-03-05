@@ -283,7 +283,10 @@ function setupIpcHandlers() {
       if (ptpProcess) {
         ptpProcess.send({ type: 'start', interface: address });
       }
-      
+      if (danteProcess) {
+        danteProcess.send({ type: 'refresh' });
+      }
+
       sendToRenderer('interface-changed', iface);
     }
   });
@@ -384,7 +387,7 @@ app.whenReady().then(() => {
     }
   }
 
-  // Initialize SDP, Meters and PTP processes with current interface
+  // Initialize SDP, Meters, PTP and Discovery processes with current interface
   if (currentNetworkInterface) {
     if (sdpProcess) {
       sdpProcess.send({ type: 'init', address: currentNetworkInterface.address });
@@ -394,6 +397,9 @@ app.whenReady().then(() => {
     }
     if (ptpProcess) {
       ptpProcess.send({ type: 'start', interface: currentNetworkInterface.address });
+    }
+    if (danteProcess) {
+      danteProcess.send({ type: 'init' });
     }
   }
 
