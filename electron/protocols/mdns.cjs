@@ -39,11 +39,10 @@ function resolveHost(host, callback) {
   // Primary: Node.js dns.lookup() — uses Windows mDNS/Bonjour stack natively
   dns.lookup(hostname, { family: 4 }, (err, address) => {
     if (!err && address) {
-      flog(`resolveHost[${hostname}] dns.lookup => ${address}`);
-      callback(address);
+        callback(address);
       return;
     }
-    flog(`resolveHost[${hostname}] dns.lookup failed (${err && err.code}), trying dns-sd -G`);
+    // dns.lookup failed, try dns-sd -G
 
     // Fallback: dns-sd -G v4
     const proc = spawn('dns-sd', ['-G', 'v4', host], { windowsHide: true });
@@ -53,7 +52,7 @@ function resolveHost(host, callback) {
       if (!resolved) {
         resolved = true;
         proc.kill();
-        flog(`resolveHost[${hostname}] dns-sd -G timeout`);
+        flog(`resolveHost timeout: ${hostname}`);
         callback(null);
       }
     }, 3000);
@@ -65,7 +64,6 @@ function resolveHost(host, callback) {
         resolved = true;
         clearTimeout(timer);
         proc.kill();
-        flog(`resolveHost[${hostname}] dns-sd -G => ${match[1]}`);
         callback(match[1]);
       }
     });
@@ -101,14 +99,11 @@ function lookupService(name, serviceType, family, onUp) {
 
     for (const rawLine of lines) {
       const line = rawLine.replace(/\r/g, ''); // strip CR
-      flog(`lookup[${name}] raw: ${JSON.stringify(line)}`);
-
       // Line 1: "  <name> can be reached at <host>:<port> (interface N)"
       const reachMatch = line.match(/can be reached at ([\w.-]+):(\d+)/i);
       if (reachMatch) {
         pendingHost = reachMatch[1];
         pendingPort = parseInt(reachMatch[2]) || 0;
-        flog(`lookup[${name}] host=${pendingHost} port=${pendingPort}`);
         continue;
       }
 
@@ -202,14 +197,12 @@ function browse(callbacks) {
 
       for (const rawLine of lines) {
         const line = rawLine.replace(/\r/g, '').trim(); // strip CRLF
-        if (line) flog(`browse[${svc.type}] raw: ${JSON.stringify(line)}`);
-
         // dns-sd output: "HH:MM:SS.mmm  Add  flags if domain  type  name"
         // or just:       "Add  flags if domain  type  name" (no timestamp)
         const addMatch = line.match(/\bAdd\s+\d+\s+\d+\s+\S+\s+\S+\.\s+(.+)$/);
         if (addMatch) {
           const name = addMatch[1].trim().replace(/\\ /g, ' ');
-          flog(`browse[${svc.type}] Add: ${JSON.stringify(name)}`);
+          flog(`Add ${svc.type}: ${name}`);
           const lp = lookupService(name, svc.type, svc.family, onUp);
           lookupProcs.push(lp);
         } else {
