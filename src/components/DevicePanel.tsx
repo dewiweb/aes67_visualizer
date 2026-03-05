@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { Stream, Device, DanteDevice } from '../types';
-import { Server, Radio, Clock, Layers, ChevronDown, ChevronRight, AlertCircle } from 'lucide-react';
+import { Server, Radio, Clock, Layers, ChevronDown, ChevronRight, AlertCircle, ArrowUpFromLine, ArrowDownToLine } from 'lucide-react';
 
 interface DevicePanelProps {
   streams: Stream[];
@@ -49,7 +49,16 @@ function aggregateDevices(streams: Stream[]): Device[] {
 }
 
 const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onStreamClick }) => {
-  const [expandedDevices, setExpandedDevices] = React.useState<Set<string>>(new Set());
+  const [expandedDevices, setExpandedDevices]     = React.useState<Set<string>>(new Set());
+  const [expandedDanteDevs, setExpandedDanteDevs] = React.useState<Set<string>>(new Set());
+
+  const toggleDanteDevice = (key: string) => {
+    setExpandedDanteDevs(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
 
   const devices = useMemo(() => aggregateDevices(streams), [streams]);
 
@@ -78,21 +87,27 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onS
 
       {/* Dante/RAVENNA devices discovered via ARC probe or mDNS */}
       {danteDevices.map((dd) => {
-        const ip = dd.addresses.find(a => a.includes('.')) || dd.host;
-        // Check if this IP also has SAP streams
-        const sapDevice = devices.find(d => d.ip === ip);
+        const ip         = dd.addresses.find(a => a.includes('.')) || dd.host;
+        const sapDevice  = devices.find(d => d.ip === ip);
+        const hasChannels = (dd.txChannelNames?.length > 0) || (dd.rxChannelNames?.length > 0);
+        const isExpanded = expandedDanteDevs.has(dd.host);
+
         return (
           <div
             key={dd.host}
             className="bg-slate-800 rounded-lg overflow-hidden border border-purple-900/40"
           >
-            <div className="flex items-center gap-3 p-3">
+            {/* Header — clickable if channel names available */}
+            <button
+              onClick={() => hasChannels && toggleDanteDevice(dd.host)}
+              className={`w-full flex items-center gap-3 p-3 text-left ${
+                hasChannels ? 'hover:bg-slate-700/50 cursor-pointer' : 'cursor-default'
+              } transition-colors`}
+            >
               <Server size={18} className="text-purple-400 shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-medium text-sm text-white truncate">
-                    {dd.name || ip}
-                  </span>
+                  <span className="font-medium text-sm text-white truncate">{dd.name || ip}</span>
                   {dd.isRAVENNA ? (
                     <span className="text-[10px] bg-teal-900/50 text-teal-300 px-1.5 py-0.5 rounded">RAVENNA</span>
                   ) : (
@@ -109,24 +124,20 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onS
                 </div>
                 <div className="flex items-center gap-3 text-xs text-slate-400 mt-0.5 flex-wrap">
                   <span className="font-mono text-slate-500">{ip}</span>
-                  {dd.model && (
-                    <span className="text-slate-500">{dd.model}</span>
-                  )}
+                  {dd.model && <span className="text-slate-500">{dd.model}</span>}
                   {dd.txChannels != null && (
                     <span className="flex items-center gap-1 text-emerald-400">
-                      <Layers size={10} />
+                      <ArrowUpFromLine size={10} />
                       {dd.txChannels} TX
                     </span>
                   )}
                   {dd.rxChannels != null && (
                     <span className="flex items-center gap-1 text-sky-400">
-                      <Layers size={10} />
+                      <ArrowDownToLine size={10} />
                       {dd.rxChannels} RX
                     </span>
                   )}
-                  {dd.sampleRate && (
-                    <span>{dd.sampleRate / 1000}kHz</span>
-                  )}
+                  {dd.sampleRate && <span>{dd.sampleRate / 1000}kHz</span>}
                 </div>
                 {dd.requiresAES67 && (
                   <div className="flex items-center gap-1 mt-1 text-[10px] text-yellow-500">
@@ -135,7 +146,61 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onS
                   </div>
                 )}
               </div>
-            </div>
+              {hasChannels && (
+                isExpanded
+                  ? <ChevronDown size={14} className="text-slate-500 shrink-0" />
+                  : <ChevronRight size={14} className="text-slate-500 shrink-0" />
+              )}
+            </button>
+
+            {/* Expanded: TX and RX channel names */}
+            {isExpanded && hasChannels && (
+              <div className="border-t border-slate-700/60">
+                {/* TX channels */}
+                {dd.txChannelNames?.length > 0 && (
+                  <div className="px-3 py-2">
+                    <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-medium mb-1.5">
+                      <ArrowUpFromLine size={10} />
+                      TX Channels
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+                      {dd.txChannelNames.map(ch => (
+                        <div key={ch.id} className="flex items-center gap-1.5 text-[10px] text-slate-300">
+                          <span className="text-slate-600 w-5 text-right shrink-0">{ch.id}</span>
+                          <span className="truncate">{ch.name || `ch${ch.id}`}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* RX channels */}
+                {dd.rxChannelNames?.length > 0 && (
+                  <div className="px-3 py-2 border-t border-slate-700/40">
+                    <div className="flex items-center gap-1.5 text-[10px] text-sky-400 font-medium mb-1.5">
+                      <ArrowDownToLine size={10} />
+                      RX Channels
+                    </div>
+                    <div className="space-y-0.5">
+                      {dd.rxChannelNames.map(ch => (
+                        <div key={ch.id} className="flex items-center gap-1.5 text-[10px]">
+                          <span className="text-slate-600 w-5 text-right shrink-0">{ch.id}</span>
+                          <span className="text-slate-300 truncate">{ch.name || `ch${ch.id}`}</span>
+                          {ch.subscribed && ch.txHost && (
+                            <span className="text-slate-500 truncate ml-auto">
+                              ← {ch.txHost.replace(/\.local\.?$/, '')}
+                            </span>
+                          )}
+                          {ch.subscribed && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         );
       })}
