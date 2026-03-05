@@ -8,6 +8,8 @@
 
 const dgram   = require('dgram');
 const crypto  = require('crypto');
+const os      = require('os');
+const IS_LINUX = os.platform() === 'linux';
 
 const MULTICAST_ADDR = '239.255.255.255';
 const PORT           = 9875;
@@ -70,7 +72,11 @@ function listen(interfaceAddress, onPacket, onError) {
     onPacket(buf, rinfo);
   });
 
-  sock.bind({ port: PORT, address: interfaceAddress, exclusive: false }, () => {
+  // Linux: bind on 0.0.0.0 — kernel delivers multicast to any socket joined on the group.
+  // Windows: bind on the interface IP to select the right NIC.
+  const bindAddress = IS_LINUX ? '0.0.0.0' : interfaceAddress;
+
+  sock.bind({ port: PORT, address: bindAddress, exclusive: false }, () => {
     try {
       sock.setMulticastInterface(interfaceAddress);
       sock.addMembership(MULTICAST_ADDR, interfaceAddress);

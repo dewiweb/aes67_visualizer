@@ -37,7 +37,9 @@
 
 'use strict';
 
-const dgram = require('dgram');
+const dgram    = require('dgram');
+const os       = require('os');
+const IS_LINUX = os.platform() === 'linux';
 
 // PTP UDP ports
 const PORT_EVENT   = 319;  // Sync, Delay_Req, Pdelay_*
@@ -430,7 +432,7 @@ function bindSocket(port, onPacket, onError) {
 
   sock.on('message', (buf, rinfo) => onPacket(buf, rinfo));
 
-  sock.bind({ port, exclusive: false }, () => {
+  sock.bind({ port, address: '0.0.0.0', exclusive: false }, () => {
     try {
       sock.addMembership(MCAST_PRIMARY, currentInterface);
       console.log(`[PTP] Listening on port ${port} (${MCAST_PRIMARY}, iface=${currentInterface})`);
