@@ -171,8 +171,6 @@ function initChildProcesses() {
           probedIps.add(ip);
           // Try Dante ARC (UDP 4440) to get device name/model/channels
           danteProcess.send({ type: 'probe-arc', ip });
-          // Try RTSP only if device has open TCP ports (RAVENNA)
-          danteProcess.send({ type: 'probe-rtsp', ip, streamNames: names });
         }
       }
     } else if (data.type === 'port-conflict') {

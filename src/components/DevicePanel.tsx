@@ -76,49 +76,69 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onS
   return (
     <div className="space-y-2 p-2">
 
-      {/* Pure Dante mDNS devices (no AES67 stream) */}
-      {danteDevices.map((dd) => (
-        <div
-          key={dd.host}
-          className="bg-slate-800 rounded-lg overflow-hidden border border-purple-900/40"
-        >
-          <div className="flex items-center gap-3 p-3">
-            <Server size={18} className="text-purple-400 shrink-0" />
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-medium text-sm text-white truncate">{dd.name}</span>
-                <span className="text-[10px] bg-purple-900/50 text-purple-300 px-1.5 py-0.5 rounded">Dante</span>
-                {dd.isAES67 && (
-                  <span className="text-[10px] bg-blue-900/50 text-blue-300 px-1.5 py-0.5 rounded">AES67</span>
-                )}
-              </div>
-              <div className="flex items-center gap-3 text-xs text-slate-400 mt-0.5">
-                {dd.addresses.length > 0 && (
-                  <span className="font-mono">{dd.addresses.find(a => a.includes('.')) || dd.host}</span>
-                )}
-                {!dd.addresses.length && (
-                  <span className="font-mono text-slate-500">{dd.host}</span>
-                )}
-                {dd.txChannels && (
-                  <span className="flex items-center gap-1">
-                    <Layers size={10} />
-                    {dd.txChannels}ch TX
+      {/* Dante/RAVENNA devices discovered via ARC probe or mDNS */}
+      {danteDevices.map((dd) => {
+        const ip = dd.addresses.find(a => a.includes('.')) || dd.host;
+        // Check if this IP also has SAP streams
+        const sapDevice = devices.find(d => d.ip === ip);
+        return (
+          <div
+            key={dd.host}
+            className="bg-slate-800 rounded-lg overflow-hidden border border-purple-900/40"
+          >
+            <div className="flex items-center gap-3 p-3">
+              <Server size={18} className="text-purple-400 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-medium text-sm text-white truncate">
+                    {dd.name || ip}
                   </span>
-                )}
-                {dd.sampleRate && (
-                  <span>{dd.sampleRate / 1000}kHz</span>
+                  {dd.isRAVENNA ? (
+                    <span className="text-[10px] bg-teal-900/50 text-teal-300 px-1.5 py-0.5 rounded">RAVENNA</span>
+                  ) : (
+                    <span className="text-[10px] bg-purple-900/50 text-purple-300 px-1.5 py-0.5 rounded">Dante</span>
+                  )}
+                  {dd.isAES67 && (
+                    <span className="text-[10px] bg-blue-900/50 text-blue-300 px-1.5 py-0.5 rounded">AES67</span>
+                  )}
+                  {sapDevice && (
+                    <span className="text-[10px] bg-green-900/50 text-green-300 px-1.5 py-0.5 rounded">
+                      {sapDevice.streamCount} streams
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 text-xs text-slate-400 mt-0.5 flex-wrap">
+                  <span className="font-mono text-slate-500">{ip}</span>
+                  {dd.model && (
+                    <span className="text-slate-500">{dd.model}</span>
+                  )}
+                  {dd.txChannels != null && (
+                    <span className="flex items-center gap-1 text-emerald-400">
+                      <Layers size={10} />
+                      {dd.txChannels} TX
+                    </span>
+                  )}
+                  {dd.rxChannels != null && (
+                    <span className="flex items-center gap-1 text-sky-400">
+                      <Layers size={10} />
+                      {dd.rxChannels} RX
+                    </span>
+                  )}
+                  {dd.sampleRate && (
+                    <span>{dd.sampleRate / 1000}kHz</span>
+                  )}
+                </div>
+                {dd.requiresAES67 && (
+                  <div className="flex items-center gap-1 mt-1 text-[10px] text-yellow-500">
+                    <AlertCircle size={10} />
+                    <span>Enable AES67 on device to stream</span>
+                  </div>
                 )}
               </div>
-              {dd.requiresAES67 && (
-                <div className="flex items-center gap-1 mt-1 text-[10px] text-yellow-500">
-                  <AlertCircle size={10} />
-                  <span>Enable AES67 on device to stream</span>
-                </div>
-              )}
             </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
 
       {/* SAP-based devices */}
       {devices.map((device) => {
