@@ -217,6 +217,12 @@ function initChildProcesses() {
     if (data.type === 'dante-devices') {
       danteDevices = data.devices;
       sendToRenderer('dante-devices', danteDevices);
+    } else if (data.type === 'ravenna-sdp') {
+      // RTSP DESCRIBE returned a SDP — inject into SDP process
+      console.log(`[Main] RAVENNA SDP received from ${data.name}, forwarding to SDP process`);
+      if (sdpProcess) {
+        sdpProcess.send({ type: 'add-stream', sdp: data.sdp, sourceIp: data.sourceIp });
+      }
     } else if (data.type === 'status') {
       console.log('[Dante]', data.status);
     } else if (data.type === 'error') {

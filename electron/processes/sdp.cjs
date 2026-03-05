@@ -250,6 +250,49 @@ function addManualStream(rawSdp) {
 }
 
 /**
+ * Add stream discovered via RTSP DESCRIBE (RAVENNA/AES67 devices)
+ * Treated as SAP stream but sourced from RTSP
+ */
+function addRavennaStream(rawSdp, sourceIp) {
+  let sdp;
+
+  try {
+    sdp = sdpTransform.parse(rawSdp);
+  } catch (e) {
+    console.error('[SDP] RTSP parse error:', e.message);
+    return;
+  }
+
+  if (!sdp.origin || !sdp.name) {
+    console.error('[SDP] RTSP SDP missing origin or name');
+    return;
+  }
+
+  const id = crypto
+    .createHash('md5')
+    .update(JSON.stringify(sdp.origin))
+    .digest('hex');
+
+  // Don't overwrite existing SAP-announced stream
+  if (sessions[id]) {
+    sessions[id].lastSeen = Date.now();
+    return;
+  }
+
+  sdp.raw = rawSdp;
+  sdp.id = id;
+  sdp.lastSeen = Date.now();
+  sdp.manual = false;
+  sdp.sourceType = 'sap';
+  sdp.sapSourceIp = sourceIp || null;
+
+  sessions[id] = parseSdp(sdp);
+  const s = sessions[id];
+  console.log(`[SDP] RAVENNA stream via RTSP: ${s.name} (${s.mcast}:${s.port})`);
+  sendUpdate();
+}
+
+/**
  * Remove stream by ID
  */
 function removeStream(streamId) {
@@ -372,6 +415,9 @@ process.on('message', (msg) => {
       break;
     case 'add-manual':
       addManualStream(msg.sdp);
+      break;
+    case 'add-stream':
+      addRavennaStream(msg.sdp, msg.sourceIp);
       break;
     case 'remove':
       removeStream(msg.streamId);

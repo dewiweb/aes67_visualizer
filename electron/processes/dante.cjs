@@ -6,6 +6,8 @@
 
 const Bonjour = require('bonjour-service').default;
 const crypto = require('crypto');
+const net = require('net');
+const dgram = require('dgram');
 
 // Dante mDNS service types — type/protocol separated (bonjour-service adds _ prefix itself)
 const DANTE_SERVICES = [
@@ -100,6 +102,137 @@ function parseDevice(service) {
 }
 
 /**
+ * Fetch SDP from a RAVENNA device via RTSP DESCRIBE (RFC 2326)
+ * Returns the raw SDP string or null on failure
+ */
+function rtspDescribe(ip, port, timeout = 3000) {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    let buffer = '';
+    const cseq = 1;
+
+    const timer = setTimeout(() => {
+      socket.destroy();
+      resolve(null);
+    }, timeout);
+
+    socket.connect(port, ip, () => {
+      const req = [
+        `DESCRIBE rtsp://${ip}:${port}/ RTSP/1.0`,
+        `CSeq: ${cseq}`,
+        'Accept: application/sdp',
+        '',
+        '',
+      ].join('\r\n');
+      socket.write(req);
+    });
+
+    socket.on('data', (data) => {
+      buffer += data.toString();
+      // Wait for end of RTSP response (blank line after headers + body)
+      if (buffer.includes('\r\n\r\n')) {
+        clearTimeout(timer);
+        socket.destroy();
+
+        // Extract SDP body after the double CRLF
+        const bodyStart = buffer.indexOf('\r\n\r\n') + 4;
+        const sdpBody = buffer.slice(bodyStart).trim();
+        resolve(sdpBody.length > 0 ? sdpBody : null);
+      }
+    });
+
+    socket.on('error', () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
+  });
+}
+
+/**
+ * Query Dante device channel count via ARC protocol (UDP, port from _netaudio-arc._udp)
+ * Returns { txChannels, rxChannels } or null
+ */
+function danteArcQuery(ip, port, timeout = 2000) {
+  return new Promise((resolve) => {
+    const socket = dgram.createSocket('udp4');
+    // Channel count request: 27ff000affff10000000
+    const request = Buffer.from('27ff000affff10000000', 'hex');
+    let done = false;
+
+    const timer = setTimeout(() => {
+      if (!done) { done = true; socket.close(); resolve(null); }
+    }, timeout);
+
+    socket.on('message', (msg) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      socket.close();
+
+      // Response layout (from network-audio-controller reverse engineering):
+      // bytes 0-3: header 27ff002c
+      // bytes 4-7: ffff1000
+      // bytes 8-9: 0001
+      // bytes 10-11: TX count (big-endian uint16)
+      // bytes 12-13: RX count (big-endian uint16)
+      if (msg.length >= 14) {
+        const txChannels = msg.readUInt16BE(10);
+        const rxChannels = msg.readUInt16BE(12);
+        resolve({ txChannels, rxChannels });
+      } else {
+        resolve(null);
+      }
+    });
+
+    socket.on('error', () => {
+      if (!done) { done = true; clearTimeout(timer); resolve(null); }
+    });
+
+    socket.send(request, port, ip, (err) => {
+      if (err && !done) { done = true; clearTimeout(timer); socket.close(); resolve(null); }
+    });
+  });
+}
+
+/**
+ * Enrich a RAVENNA device with its SDP via RTSP DESCRIBE, then forward as stream
+ */
+async function fetchRavennaStreams(device) {
+  const ip = device.addresses.find(a => a.includes('.'));
+  if (!ip || !device.port) return;
+
+  const sdp = await rtspDescribe(ip, device.port);
+  if (!sdp) {
+    console.log(`[RTSP] No SDP from ${device.name} (${ip}:${device.port})`);
+    return;
+  }
+
+  console.log(`[RTSP] Got SDP from ${device.name} (${ip}:${device.port})`);
+  process.send({ type: 'ravenna-sdp', name: device.name, sdp, sourceIp: ip });
+}
+
+/**
+ * Enrich a Dante device with its channel count via ARC protocol
+ */
+async function fetchDanteChannels(device) {
+  const ip = device.addresses.find(a => a.includes('.'));
+  const arcPort = device.port || 4440;
+  if (!ip) return;
+
+  const result = await danteArcQuery(ip, arcPort);
+  if (!result) return;
+
+  const existing = devices.get(device.host);
+  if (existing) {
+    existing.txChannels = result.txChannels || existing.txChannels;
+    existing.rxChannels = result.rxChannels || existing.rxChannels;
+    devices.set(device.host, existing);
+    console.log(`[Dante ARC] ${device.name}: ${result.txChannels}TX / ${result.rxChannels}RX`);
+    scheduleUpdate();
+  }
+}
+
+/**
  * Send update to main process — devices only, streams come from SAP
  */
 function sendUpdate() {
@@ -148,13 +281,22 @@ function onServiceUp(service) {
   const existingDevice = devices.get(service.host);
   
   if (existingDevice) {
-    // Merge information from multiple service types
     devices.set(service.host, { ...existingDevice, ...device });
   } else {
     devices.set(service.host, device);
   }
   
   scheduleUpdate();
+
+  // For RAVENNA devices: fetch SDP via RTSP DESCRIBE
+  if (device.isRAVENNA && !existingDevice) {
+    fetchRavennaStreams(device);
+  }
+
+  // For Dante devices: query channel count via ARC protocol
+  if (device.isDante && !existingDevice) {
+    fetchDanteChannels(device);
+  }
 }
 
 /**
