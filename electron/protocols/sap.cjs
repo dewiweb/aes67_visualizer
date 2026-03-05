@@ -70,7 +70,7 @@ function listen(interfaceAddress, onPacket, onError) {
     onPacket(buf, rinfo);
   });
 
-  sock.bind({ port: PORT, exclusive: false }, () => {
+  sock.bind({ port: PORT, address: interfaceAddress, exclusive: false }, () => {
     try {
       sock.setMulticastInterface(interfaceAddress);
       sock.addMembership(MULTICAST_ADDR, interfaceAddress);
