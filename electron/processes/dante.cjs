@@ -474,16 +474,39 @@ function refresh() {
  * Probe RTSP on an IP across common RAVENNA ports, forward any SDP found
  */
 async function probeRtspIp(ip) {
-  const RAVENNA_RTSP_PORTS = [9010, 554, 8554, 9020, 8000, 5000, 7272];
+  // Common RAVENNA/AES67 RTSP ports: Lawo=9010, standard=554, Merging=8554, QSC=9020
+  const RAVENNA_RTSP_PORTS = [9010, 554, 8554, 9020, 8000, 5000, 7272, 80, 443, 9030, 9040];
+  let connected = false;
+
   for (const port of RAVENNA_RTSP_PORTS) {
-    const sdp = await rtspDescribe(ip, port, 2000);
+    // First test TCP connection (fast)
+    const reachable = await new Promise((resolve) => {
+      const s = new net.Socket();
+      s.setTimeout(1000);
+      s.connect(port, ip, () => { s.destroy(); resolve(true); });
+      s.on('error', () => resolve(false));
+      s.on('timeout', () => { s.destroy(); resolve(false); });
+    });
+
+    if (!reachable) continue;
+    connected = true;
+    console.log(`[RTSP Probe] ${ip}:${port} TCP open - trying DESCRIBE`);
+
+    const sdp = await rtspDescribe(ip, port, 3000);
     if (sdp) {
-      console.log(`[RTSP Probe] ${ip}:${port} → SDP found`);
+      console.log(`[RTSP Probe] ${ip}:${port} → SDP found (${sdp.slice(0, 80).replace(/\n/g, ' ')})`);
       process.send({ type: 'ravenna-sdp', name: ip, sdp, sourceIp: ip });
-      return; // found on this port, stop probing
+      return;
+    } else {
+      console.log(`[RTSP Probe] ${ip}:${port} TCP open but no SDP`);
     }
   }
-  console.log(`[RTSP Probe] ${ip}: no RTSP response on any port`);
+
+  if (!connected) {
+    console.log(`[RTSP Probe] ${ip}: no open TCP ports found`);
+  } else {
+    console.log(`[RTSP Probe] ${ip}: TCP ports open but no RTSP/SDP`);
+  }
 }
 
 // IPC message handler
