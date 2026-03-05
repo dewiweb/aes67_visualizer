@@ -150,23 +150,31 @@ function rtspDescribe(ip, port, timeout = 4000) {
         let optResp = null;
         let base = baseWithoutPort;
 
-        for (const tryBase of [baseWithoutPort, baseWithPort]) {
+        // Try OPTIONS * first (RFC 2326 §10.1 - server-wide), then with URL
+        const optionsCandidates = [
+          ['*', baseWithoutPort],
+          [`${baseWithoutPort}/`, baseWithoutPort],
+          [`${baseWithPort}/`,    baseWithPort],
+        ];
+
+        for (const [optUrl, tryBase] of optionsCandidates) {
           base = tryBase;
           optResp = await Promise.race([
-            rtspRequest(socket, 'OPTIONS', `${tryBase}/`, 1),
+            rtspRequest(socket, 'OPTIONS', optUrl, 1),
             new Promise(r => setTimeout(() => r(null), 2000)),
           ]);
           if (!optResp) continue;
           const st = optResp.headers.match(/^RTSP\/1\.0\s+(\d+)/);
-          if (st && st[1] === '200') break; // success
-          optResp = null; // try next base
+          console.log(`[RTSP] ${ip}:${port} OPTIONS ${optUrl} → ${st ? st[1] : '?'}`);
+          if (st && st[1] === '200') break;
+          optResp = null;
         }
 
         if (!optResp) return done(null);
 
         const statusMatch = optResp.headers.match(/^RTSP\/1\.0\s+(\d+)/);
         if (!statusMatch || statusMatch[1] !== '200') {
-          console.log(`[RTSP] ${ip}:${port} OPTIONS failed: ${optResp.headers.slice(0,80).replace(/\r\n/g,' | ')}`);
+          console.log(`[RTSP] ${ip}:${port} OPTIONS all failed`);
           return done(null);
         }
 
