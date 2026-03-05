@@ -130,7 +130,8 @@ function lookupService(name, serviceType, family, onUp) {
           const valEnd = i + 1 < keyPositions.length
             ? keyPositions[i + 1].valStart - keyPositions[i + 1].key.length - 1
             : str.length;
-          txt[key] = str.slice(valStart, valEnd).trim();
+          // Strip backslash escapes (dns-sd uses "\ " for spaces, "\\" for backslash)
+          txt[key] = str.slice(valStart, valEnd).trim().replace(/\\(.)/g, '$1');
         }
 
         const host = pendingHost;
