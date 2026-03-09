@@ -147,6 +147,22 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t, onStream
         const hasDanteAes67Streams = devStreams.some(s => s.streamFamily === 'dante-aes67');
         const effectiveAES67 = dd?.isAES67 || hasDanteAes67Streams;
 
+        // Pre-compute which SAP streams are matched to TX channel names (for Dante AES67)
+        const matchedStreamIds = new Set<string>();
+        if (dd?.txChannelNames?.length) {
+          for (const ch of dd.txChannelNames) {
+            const chName = ch.name || `ch${ch.id}`;
+            const match = devStreams.find(s => {
+              if (!s.name) return false;
+              const sName = s.name.replace(/@.+$/, '').trim();
+              return sName === chName || s.name === chName ||
+                     s.name === `${chName}@${dd?.name || ip}` ||
+                     sName.startsWith(chName + ' ');
+            });
+            if (match) matchedStreamIds.add(match.id);
+          }
+        }
+
         // Protocol colour: teal=RAVENNA, blue=AES67, purple=Dante, slate=SAP-only
         const borderColor = dd?.isRAVENNA    ? 'border-teal-900/40'
                           : effectiveAES67   ? 'border-blue-900/40'
@@ -309,15 +325,13 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t, onStream
                 {(dd?.txChannelNames?.length ?? 0) > 0 && (() => {
                   const txWithStreams = dd!.txChannelNames.map((ch, idx) => {
                     const chName = ch.name || `ch${ch.id}`;
-                    // Dante AES67 SAP names: "CH1@EIKOS4K" or "CH1" — strip @device suffix for matching
-                    const sapStream = devStreams.find(s => {
-                      if (!s.name) return false;
-                      const sName = s.name.replace(/@.+$/, '').trim();
-                      return sName === chName ||
-                             s.name === chName ||
+                    // Find matching SAP stream by ID using pre-computed matchedStreamIds
+                    const sapStream = devStreams.find(s => matchedStreamIds.has(s.id) && (() => {
+                      const sName = s.name?.replace(/@.+$/, '').trim() ?? '';
+                      return sName === chName || s.name === chName ||
                              s.name === `${chName}@${dd?.name || ip}` ||
                              sName.startsWith(chName + ' ');
-                    });
+                    })());
                     return { ch, chName, sapStream, idx };
                   });
                   const hasSap = txWithStreams.some(x => x.sapStream);
@@ -456,10 +470,10 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t, onStream
                   </div>
                 )}
 
-                {/* SAP streams list — shown for RAVENNA/AES67-only; hidden for Dante with txChannelNames (already shown above) */}
-                {devStreams.length > 0 && !(dd?.isDante && (dd?.txChannelNames?.length ?? 0) > 0) && (
+                {/* SAP streams list — hidden for streams already shown in TX channels above; always show unmatched streams */}
+                {devStreams.filter(s => !matchedStreamIds.has(s.id)).length > 0 && (
                   <div className="divide-y divide-slate-700/50 border-t border-slate-700/40">
-                    {devStreams.map(stream => (
+                    {devStreams.filter(s => !matchedStreamIds.has(s.id)).map(stream => (
                       <div
                         key={stream.id}
                         onClick={() => onStreamClick?.(stream)}
