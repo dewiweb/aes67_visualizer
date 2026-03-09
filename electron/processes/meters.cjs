@@ -4,7 +4,9 @@
  * Based on Digisynthetic/aes67-stream-monitor AudioMonitor.js
  */
 
-const dgram = require('dgram');
+const dgram    = require('dgram');
+const os       = require('os');
+const IS_LINUX = os.platform() === 'linux';
 
 const MAX_INT_24 = 8388607; // 2^23 - 1
 const MAX_INT_16 = 32767;   // 2^15 - 1
@@ -52,7 +54,7 @@ function startMonitoring(stream) {
       // Detect port conflicts
       if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {
         const isRtpMidiPort = port === 5004;
-        const platform = require('os').platform();
+        const platform = os.platform();
         let message = `Port ${port} conflict: ${err.message}`;
         if (isRtpMidiPort && platform === 'darwin') {
           message = `Port 5004 conflict — likely Apple RTP MIDI (rtpmidi daemon).\n` +
@@ -84,12 +86,15 @@ function startMonitoring(stream) {
       processRtpPacket(buffer, monitor);
     });
 
-    // Bind on 0.0.0.0:port (not interface IP) so multiple streams sharing
-    // the same port (e.g. 5004) can coexist. addMembership filters by mcast group.
-    socket.bind({ port, exclusive: false }, () => {
+    // Linux: bind on the multicast group address so the kernel routes inbound
+    // multicast packets to this socket. Binding on 0.0.0.0 works on Windows
+    // but silently drops multicast on Linux.
+    const bindAddress = IS_LINUX ? mcast : '0.0.0.0';
+    socket.bind({ port, address: bindAddress, exclusive: false }, () => {
       try {
+        socket.setMulticastInterface(currentInterface);
         socket.addMembership(mcast, currentInterface);
-        console.log(`[Meters] Started monitoring ${stream.name || id} (${mcast}:${port})`);
+        console.log(`[Meters] Started monitoring ${stream.name || id} (${mcast}:${port}) bind=${bindAddress}`);
       } catch (e) {
         console.error(`[Meters] Multicast join error for ${mcast}:`, e.message);
       }
