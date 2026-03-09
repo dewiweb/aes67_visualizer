@@ -159,89 +159,24 @@ function lookupServiceDnsSd(name, serviceType, family, onUp) {
   return proc;
 }
 
-/**
- * Lookup via avahi-browse -r (Linux)
- * avahi-browse -r outputs service info including resolved hostname and address.
- */
-function lookupServiceAvahi(name, serviceType, family, onUp) {
-  // Use avahi-browse --resolve in parseable mode for a specific instance
-  // avahi-browse -r -p outputs lines like:
-  //   =;eth0;IPv4;Name;_type._proto;local;hostname.local;192.168.x.x;port;"txt"
-  const proc = spawn('avahi-browse', [
-    '--resolve', '--parsable', '--terminate', '--no-db-lookup',
-    serviceType,
-  ]);
-  const timer = setTimeout(() => proc.kill(), 6000);
-  let buffer = '';
-  let found = false;
 
-  proc.stdout.on('data', (data) => {
-    buffer += data.toString();
-    const lines = buffer.split('\n');
-    buffer = lines.pop();
-
-    for (const line of lines) {
-      // Resolved line: =;iface;IPv4;instanceName;type;domain;hostname;address;port;txt
-      const parts = line.split(';');
-      if (parts[0] !== '=' || parts[2] !== 'IPv4') continue;
-      const instanceName = parts[3];
-      if (instanceName !== name) continue;
-
-      const host    = parts[6];
-      const address = parts[7];
-      const port    = parseInt(parts[8]) || 0;
-      // TXT: "key=val" "key2=val2" ...
-      const rawTxt  = parts.slice(9).join(';');
-      const txt     = {};
-      const txtPairs = rawTxt.match(/"([^"]*)"/g) || [];
-      for (const pair of txtPairs) {
-        const kv = pair.slice(1, -1); // strip quotes
-        const eq = kv.indexOf('=');
-        if (eq > 0) txt[kv.slice(0, eq)] = kv.slice(eq + 1);
-      }
-
-      found = true;
-      clearTimeout(timer);
-      proc.kill();
-      onUp({ name, type: serviceType, host, addresses: address ? [address] : [], port, txt, family });
-      break;
-    }
-  });
-
-  proc.on('close', () => { clearTimeout(timer); });
-  proc.stderr && proc.stderr.on('data', () => {});
-  proc.on('error', () => { clearTimeout(timer); });
-  return proc;
-}
-
-function lookupService(name, serviceType, family, onUp) {
-  if (IS_LINUX) return lookupServiceAvahi(name, serviceType, family, onUp);
-  return lookupServiceDnsSd(name, serviceType, family, onUp);
-}
-
-/**
- * Browse for all known service types and call onUp/onDown on changes.
- *
- * @param {{ onUp: Function, onDown: Function }} callbacks
- * @returns {{ stop: Function }}  Handle to stop all processes
- */
 /**
  * Browse using avahi-browse (Linux)
- * avahi-browse -p outputs:
- *   +;iface;IPv4;instanceName;type;domain   (add)
- *   -;iface;IPv4;instanceName;type;domain   (remove)
+ * Uses --resolve so each line already contains the resolved IP address.
+ * avahi-browse -r -p outputs two line types per service:
+ *   +;iface;IPv4;instanceName;type;domain             (announce)
+ *   =;iface;IPv4;instanceName;type;domain;host;ip;port;"txt"...  (resolved)
+ *   -;iface;IPv4;instanceName;type;domain             (remove)
  */
 function browseAvahi(callbacks) {
   const { onUp, onDown } = callbacks;
   const browseProcs = [];
-  const lookupProcs = [];
 
-  console.log('[mDNS] Starting discovery via avahi-browse (Linux)...');
+  console.log('[mDNS] Starting discovery via avahi-browse --resolve (Linux)...');
 
   for (const svc of SERVICES) {
-    // avahi-browse only supports TCP/UDP types; skip unsupported
     const proc = spawn('avahi-browse', [
-      '--parsable', '--no-db-lookup', svc.type,
+      '--resolve', '--parsable', '--no-db-lookup', svc.type,
     ]);
     browseProcs.push(proc);
     let buffer = '';
@@ -254,13 +189,27 @@ function browseAvahi(callbacks) {
       for (const line of lines) {
         const parts = line.split(';');
         if (parts.length < 5) continue;
-        const event        = parts[0]; // '+' or '-'
-        const instanceName = parts[3];
-        if (event === '+') {
-          const lp = lookupService(instanceName, svc.type, svc.family, onUp);
-          if (lp) lookupProcs.push(lp);
-        } else if (event === '-' && onDown) {
-          onDown({ name: instanceName, host: instanceName });
+        const event = parts[0];
+
+        if (event === '=') {
+          // Resolved: =;iface;IPv4;name;type;domain;host;ip;port;"txt"...
+          if (parts[2] !== 'IPv4') continue;
+          const instanceName = parts[3];
+          const host    = parts[6];
+          const address = parts[7];
+          const port    = parseInt(parts[8]) || 0;
+          const rawTxt  = parts.slice(9).join(';');
+          const txt     = {};
+          for (const pair of (rawTxt.match(/"([^"]*)"/g) || [])) {
+            const kv = pair.slice(1, -1);
+            const eq = kv.indexOf('=');
+            if (eq > 0) txt[kv.slice(0, eq)] = kv.slice(eq + 1);
+          }
+          onUp({ name: instanceName, type: svc.type, host, addresses: address ? [address] : [], port, txt, family: svc.family });
+
+        } else if (event === '-') {
+          const instanceName = parts[3];
+          if (onDown) onDown({ name: instanceName, host: instanceName });
         }
       }
     });
