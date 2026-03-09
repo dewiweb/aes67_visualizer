@@ -297,14 +297,14 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t, onStream
 
                 {/* TX channel names — enriched with SAP stream info when available */}
                 {(dd?.txChannelNames?.length ?? 0) > 0 && (() => {
-                  const txWithStreams = dd!.txChannelNames.map(ch => {
+                  const txWithStreams = dd!.txChannelNames.map((ch, idx) => {
                     const chName = ch.name || `ch${ch.id}`;
                     const sapStream = devStreams.find(s =>
                       s.name === chName ||
                       s.name === `${chName}@${dd?.name || ip}` ||
                       s.name?.startsWith(chName + ' ')
                     );
-                    return { ch, chName, sapStream };
+                    return { ch, chName, sapStream, idx };
                   });
                   const hasSap = txWithStreams.some(x => x.sapStream);
                   return (
@@ -314,8 +314,8 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t, onStream
                       </div>
                       {hasSap ? (
                         <div className="space-y-0.5">
-                          {txWithStreams.map(({ ch, chName, sapStream }) => (
-                            <div key={`tx-${ch.id}`} className="flex items-center gap-1.5 text-[10px]">
+                          {txWithStreams.map(({ ch, chName, sapStream, idx }) => (
+                            <div key={`tx-${idx}`} className="flex items-center gap-1.5 text-[10px]">
                               <span className="text-slate-600 w-5 text-right shrink-0">{ch.id}</span>
                               <span className="text-slate-300 truncate flex-1">{chName}</span>
                               {sapStream && (
@@ -331,8 +331,8 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t, onStream
                         </div>
                       ) : (
                         <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
-                          {txWithStreams.map(({ ch, chName }) => (
-                            <div key={`tx-${ch.id}`} className="flex items-center gap-1.5 text-[10px] text-slate-300">
+                          {txWithStreams.map(({ ch, chName, idx }) => (
+                            <div key={`tx-${idx}`} className="flex items-center gap-1.5 text-[10px] text-slate-300">
                               <span className="text-slate-600 w-5 text-right shrink-0">{ch.id}</span>
                               <span className="truncate">{chName}</span>
                             </div>
@@ -350,7 +350,7 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t, onStream
                       <ArrowDownToLine size={10} /> RX Channels
                     </div>
                     <div className="space-y-1">
-                      {dd!.rxChannelNames.map(ch => {
+                      {dd!.rxChannelNames.map((ch, rxIdx) => {
                         const statusColor =
                           ch.statusText === 'Subscribed'   ? 'text-emerald-400' :
                           ch.statusText === 'Dangling'     ? 'text-amber-400'   :
@@ -371,7 +371,7 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t, onStream
                           })));
 
                         return (
-                          <div key={`rx-${ch.id}`}>
+                          <div key={`rx-${rxIdx}`}>
                             {/* Channel row */}
                             <div className="flex items-center gap-1 text-[10px] group">
                               <span className="text-slate-600 w-5 text-right shrink-0">{ch.id}</span>
