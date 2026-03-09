@@ -1,0 +1,148 @@
+# AES67 Visualizer — Windsurf Project Rules
+
+## Project Overview
+Cross-platform AES67 / ST2110-30 / RAVENNA / Dante audio stream visualization and monitoring app.
+Built with Electron 33 + React 18 + TypeScript + TailwindCSS.
+
+## Architecture
+- `electron/main.js` — Electron main process, IPC orchestration
+- `electron/preload.cjs` — Context bridge API
+- `electron/processes/` — Child processes: discovery, sdp, audio, meters, ptp
+- `electron/protocols/` — Protocol implementations: arc, rtsp, mdns, sap, aes67, ravenna
+- `src/components/` — React UI components
+- `src/types/index.ts` — Shared TypeScript types
+
+## Key Design Decisions
+- Device registry keyed by IP address (not hostname) to avoid duplicates
+- All discovery sources (mDNS, ARC, RTSP, SAP) merge into one device via `upsert()`/`mergeDevice()`
+- SAP multicast socket binds on `0.0.0.0` on Linux, interface IP on Windows
+- mDNS uses `dns-sd` on Windows/macOS, `avahi-browse` on Linux
+- PTP ports 319/320 require `cap_net_bind_service` on Linux AppImage
+
+## Reference Source Repositories
+
+The following repositories were studied as protocol and architecture references.
+No source code was copied. This project remains under MIT License.
+
+### philhartung/aes67-monitor
+- **URL**: https://github.com/philhartung/aes67-monitor
+- **License**: MIT
+- **Language**: JavaScript / Electron
+- **Key learnings**:
+  - SAP socket bind on port 9875, multicast group `239.255.255.255`
+  - SAP session ID derived from SDP `o=` line (MD5 hash)
+  - SAP announcement format: header + `application/sdp\0` + SDP body
+  - Stream timeout: 5 minutes for non-refreshed SAP sessions
+  - `sdp-transform` library for SDP parsing
+  - RTP audio playback via `audify` (RtAudio Node.js bindings)
+  - Jitter buffer implementation for RTP reassembly
+  - Multicast RTP socket bind on `0.0.0.0:5004`
+
+### Digisynthetic/aes67-stream-monitor
+- **URL**: https://github.com/Digisynthetic/aes67-stream-monitor
+- **License**: Proprietary (architecture reference only)
+- **Language**: JavaScript / Electron
+- **Key learnings**:
+  - `SapDiscovery` class as EventEmitter pattern
+  - Monitoring Wall UI concept (drag-and-drop stream slots)
+  - i18n multi-language architecture
+  - Level polling via UDP JSON on port 8999
+  - RMS level calculation over L24 PCM samples
+
+### chris-ritsen/network-audio-controller
+- **URL**: https://github.com/chris-ritsen/network-audio-controller
+- **License**: MIT
+- **Language**: Python
+- **Key learnings**:
+  - Dante ARC protocol binary format: `start_code(0x27FF) + total_length + seqnum + opcode + result_code + content`
+  - ARC UDP port: 4440
+  - Key opcodes: `0x1000` (channel count), `0x1002` (device name), `0x1003` (device info),
+    `0x2000` (TX channel list), `0x2010` (TX friendly names), `0x3000` (RX list + subscriptions),
+    `0x3010` (set subscriptions / routing), `0x2201` (create TX flow), `0x3200` (query RX flows)
+  - Result codes: `0x0001` = OK, `0x8112` = OK with more pages, `0x0022` = error
+  - Pagination via result code `0x8112` (more data available)
+
+### teodly/inferno (mirror of lumifaza/inferno)
+- **URL**: https://github.com/teodly/inferno
+- **License**: GPL-3.0 (protocol reference only — no code included)
+- **Language**: Rust
+- **Key learnings**:
+  - ARC packet header layout and field offsets
+  - Pagination mechanism using result code `0x8112`
+  - Flow control via port 4455 (DBCP): `start_code=0x1102`
+  - mDNS service types: `_netaudio-chan._udp` (per-TX-channel), `_netaudio-bund._udp` (bundles)
+  - mDNS service types full list: `_netaudio-arc._udp`, `_netaudio-cmc._udp`, `_netaudio-dbc._udp`
+
+### soundondigital/ravennakit
+- **URL**: https://github.com/soundondigital/ravennakit
+- **License**: AGPLv3 (protocol/spec reference only — no code included)
+- **Language**: C++
+- **Key learnings**:
+  - RAVENNA RTSP URL paths: `/by-name/<stream>`, `/by-id/<n>`
+  - RTSP port: 554 (standard), RTSP OPTIONS → DESCRIBE sequence
+  - RTP default port: 5004 for RAVENNA streams
+  - PTPv2 profiles for AES67/RAVENNA
+  - mDNS DNS-SD service types: `_ravenna._tcp`, `_ravenna-session._tcp`, `_aes67._udp`
+
+### martim01/pam
+- **URL**: https://github.com/martim01/pam
+- **License**: MIT
+- **Language**: C++
+- **Key learnings**:
+  - Confirms RTP port 5004 and RTSP port 554 for RAVENNA
+  - PTP domain parsing from SDP `a=ts-refclk:ptp=...` attribute
+  - PTP clock-domain from SDP `a=clock-domain` (RAVENNA extension)
+  - PTP hybrid mode: multicast + unicast negotiation
+  - AM824 codec (AES3 / SMPTE ST2110-31) alongside L16/L24
+  - Livewire (Axia) device discovery alongside SAP
+  - `a=mediaclk:direct=...` SDP attribute for media clock
+
+### bondagit/aes67-linux-daemon
+- **URL**: https://github.com/bondagit/aes67-linux-daemon
+- **License**: LGPL-2.1 (protocol reference only — no code included)
+- **Language**: C++
+- **Key learnings**:
+  - AES67 reference Linux implementation
+  - PTP grandmaster selection and BMCA algorithm
+  - SAP announcement interval and session management
+  - SDP `a=ts-refclk` attribute for PTP clock reference
+
+## Protocol Quick Reference
+
+### Ports
+| Port | Protocol | Usage |
+|------|----------|-------|
+| 9875 UDP | SAP RFC 2974 | Stream announcements, multicast `239.255.255.255` |
+| 5353 UDP | mDNS | Device discovery DNS-SD, multicast `224.0.0.251` |
+| 554 TCP | RTSP RFC 2326 | RAVENNA SDP retrieval |
+| 5004 UDP | RTP | RAVENNA/AES67 audio transport |
+| 319 UDP | PTPv2 event | Sync, Delay_Req, multicast `224.0.1.129` |
+| 320 UDP | PTPv2 general | Announce, Follow_Up, multicast `224.0.1.129` |
+| 4440 UDP | Dante ARC | Device control: name, channels, routing |
+| 4455 UDP | Dante DBCP | RTP flow creation/deletion |
+| 4321 UDP | Dante RTP | Native Dante audio transport |
+
+### mDNS Service Types
+| Type | Protocol | Role |
+|------|----------|------|
+| `_netaudio-arc._udp` | Dante | Device control (ARC) |
+| `_netaudio-cmc._udp` | Dante | Clock domain management |
+| `_netaudio-dbc._udp` | Dante | Broadway control |
+| `_netaudio-chan._udp` | Dante | Per-TX-channel announcement |
+| `_netaudio-bund._udp` | Dante | Multicast bundle flows |
+| `_ravenna._tcp` | RAVENNA | Device discovery |
+| `_ravenna-session._tcp` | RAVENNA | Stream session |
+| `_aes67._udp` | AES67 | Device discovery |
+
+### ARC Opcodes
+| Opcode | Description | Status |
+|--------|-------------|--------|
+| `0x1000` | Channel count (TX + RX) | ✅ implemented |
+| `0x1002` | Device name | ✅ implemented |
+| `0x1003` | Device info | ✅ implemented |
+| `0x2000` | TX channel list (paginated) | ✅ implemented |
+| `0x2010` | TX channel friendly names | ✅ implemented |
+| `0x3000` | RX channel list + subscription status | ✅ implemented |
+| `0x3010` | Set channel subscriptions (routing) | ❌ not yet |
+| `0x2201` | Create multicast TX flow | ❌ not yet |
+| `0x3200` | Query RX flows | ❌ not yet |
