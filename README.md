@@ -167,7 +167,7 @@ This project remains under MIT License and is fully compatible with all referenc
 | [teodly/inferno](https://github.com/teodly/inferno) (mirror of [lumifaza/inferno](https://gitlab.com/lumifaza/inferno)) | **GPL-3.0** | Rust | ARC packet header layout, pagination (`0x8112`), flows control port 4455, mDNS service types `_netaudio-chan`, `_netaudio-bund` — **protocol reference only, no code included** |
 | [soundondigital/ravennakit](https://github.com/soundondigital/ravennakit) | **AGPLv3** | C++ | RAVENNA RTSP paths (`/by-name/`, `/by-id/`), RTP port 5004, PTPv2 profiles, DNS-SD service types — **protocol/spec reference only, no code included** |
 | [martim01/pam](https://github.com/martim01/pam) | **MIT** | C++ | AES67/RAVENNA/ST2110 monitor — confirms RTP port 5004, RTSP port 554, PTP domain from `a=ts-refclk`/`a=clock-domain` SDP attributes, PTP hybrid mode, AM824 codec |
-| [bondagit/aes67-linux-daemon](https://github.com/bondagit/aes67-linux-daemon) | **LGPL-2.1** | C++ | AES67 Linux reference implementation — **protocol reference only, no code included** |
+| [bondagit/aes67-linux-daemon](https://github.com/bondagit/aes67-linux-daemon) | **GPL-3.0** | C++ | AES67 Linux daemon: SAP+mDNS+RTSP, REST API, React WebUI — **protocol reference only, no code included** |
 
 ### Standards & Specifications
 
