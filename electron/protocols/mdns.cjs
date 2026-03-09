@@ -2,7 +2,7 @@
  * mDNS/DNS-SD discovery — cross-platform
  *
  * Windows/macOS : uses dns-sd (Apple Bonjour)  — dns-sd -B / -L / -G
- * Linux         : uses avahi-browse / avahi-resolve-host-name
+ * Linux         : uses multicast-dns (raw mDNS socket) — no avahi/D-Bus required
  *
  * Browses for Dante, RAVENNA and AES67 service types.
  */
@@ -13,6 +13,7 @@ const { spawn }    = require('child_process');
 const os           = require('os');
 const IS_LINUX     = os.platform() === 'linux';
 const IS_WINDOWS   = os.platform() === 'win32';
+const mdns         = IS_LINUX ? require('multicast-dns')() : null;
 
 // mDNS service types and their protocol families
 // Sources: network-audio-controller, Inferno (gitlab.com/lumifaza/inferno)
@@ -204,131 +205,128 @@ function lookupServiceAvahi(name, serviceType, family, onUp) {
 }
 
 /**
- * Browse using avahi-browse (Linux)
- * Uses --resolve so each line already contains the resolved IP address.
- * avahi-browse -r -p outputs two line types per service:
- *   +;iface;IPv4;instanceName;type;domain             (announce)
- *   =;iface;IPv4;instanceName;type;domain;host;ip;port;"txt"...  (resolved)
- *   -;iface;IPv4;instanceName;type;domain             (remove)
+ * Browse using multicast-dns (Linux) — raw mDNS socket, no avahi/D-Bus required.
+ * Sends PTR queries for each service type and listens for responses.
+ * Works for Dante, RAVENNA and AES67 devices regardless of avahi state.
  */
-function browseAvahi(callbacks) {
+function browseMdns(callbacks) {
   const { onUp, onDown } = callbacks;
-  const browseProcs = [];
-  const lookupProcs = [];
+  // Map: `serviceType|instanceName` → service record (for dedup + onDown)
+  const active = new Map();
+  // Pending SRV/TXT answers waiting for A record: key → { svc, name, port, txt }
+  const pending = new Map();
 
-  // Track resolved instances to avoid duplicate onUp calls
-  const resolved = new Set();
+  console.log('[mDNS] Starting discovery via multicast-dns (Linux)...');
 
-  console.log('[mDNS] Starting discovery via avahi-browse --resolve (Linux)...');
-
+  // Build lookup map: fqdn service type → SERVICES entry
+  const svcByFqdn = {};
   for (const svc of SERVICES) {
-    const proc = spawn('avahi-browse', [
-      '--resolve', '--parsable', '--no-db-lookup', svc.type,
-    ]);
-    browseProcs.push(proc);
-    let buffer = '';
+    svcByFqdn[`${svc.type}.local`] = svc;
+  }
 
-    proc.stdout.on('data', (data) => {
-      buffer += data.toString();
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
+  function sendQueries() {
+    const questions = SERVICES.map(svc => ({ name: `${svc.type}.local`, type: 'PTR' }));
+    try { mdns.query({ questions }); } catch (_) {}
+  }
 
-      for (const line of lines) {
-        const parts = line.split(';');
-        if (parts.length < 5) continue;
-        const event = parts[0];
+  // Initial query + periodic refresh every 60s
+  sendQueries();
+  const refreshTimer = setInterval(sendQueries, 60000);
 
-        if (event === '=') {
-          // Resolved inline: =;iface;IPv4;name;type;domain;host;ip;port;"txt"...
-          if (parts[2] !== 'IPv4') continue;
-          const instanceName = parts[3];
-          const key = `${svc.type}|${instanceName}`;
-          resolved.add(key);
-          const host    = parts[6];
-          const address = parts[7];
-          const port    = parseInt(parts[8]) || 0;
-          const rawTxt  = parts.slice(9).join(';');
-          const txt     = {};
-          for (const pair of (rawTxt.match(/"([^"]*)"/g) || [])) {
-            const kv = pair.slice(1, -1);
-            const eq = kv.indexOf('=');
-            if (eq > 0) txt[kv.slice(0, eq)] = kv.slice(eq + 1);
-          }
-          onUp({ name: instanceName, type: svc.type, host, addresses: address ? [address] : [], port, txt, family: svc.family });
+  mdns.on('response', (response) => {
+    // Collect all records from answer + additional sections
+    const allRecords = [...(response.answers || []), ...(response.additionals || [])];
 
-        } else if (event === '+') {
-          // Announce: =;iface;IPv4;name;type;domain — trigger active lookup as fallback
-          if (parts[2] !== 'IPv4') continue;
-          const instanceName = parts[3];
-          const key = `${svc.type}|${instanceName}`;
-          // Wait 2s for the passive '=' line before launching active lookup
-          setTimeout(() => {
-            if (resolved.has(key)) return;
-            const lp = lookupServiceAvahi(instanceName, svc.type, svc.family, (service) => {
-              if (!resolved.has(key)) {
-                resolved.add(key);
-                onUp(service);
-              }
-            });
-            if (lp) lookupProcs.push(lp);
-          }, 2000);
+    // Index A records: hostname → ip
+    const aRecords = {};
+    for (const r of allRecords) {
+      if (r.type === 'A' && r.data) aRecords[r.name] = r.data;
+    }
 
-        } else if (event === '-') {
-          const instanceName = parts[3];
-          resolved.delete(`${svc.type}|${instanceName}`);
+    // Process PTR records
+    for (const r of allRecords) {
+      if (r.type !== 'PTR') continue;
+      const svc = svcByFqdn[r.name];
+      if (!svc) continue;
+
+      // r.data = "InstanceName._type._proto.local"
+      const instanceFqdn = r.data;
+      const instanceName = instanceFqdn.replace(`.${svc.type}.local`, '');
+      const key = `${svc.type}|${instanceName}`;
+
+      if (r.ttl === 0) {
+        // Goodbye packet
+        if (active.has(key)) {
+          active.delete(key);
           if (onDown) onDown({ name: instanceName, host: instanceName });
         }
+        continue;
       }
-    });
 
-    let avahiErrorSent = false;
+      if (active.has(key)) continue; // already reported
 
-    proc.stderr && proc.stderr.on('data', (data) => {
-      const msg = data.toString();
-      if (!avahiErrorSent && msg.toLowerCase().includes('daemon not running')) {
-        avahiErrorSent = true;
-        console.warn('[mDNS] avahi-daemon is not running');
-        process.send && process.send({
-          type: 'mdns-error',
-          code: 'AVAHI_DAEMON_NOT_RUNNING',
-          message:
-            'avahi-daemon is not running — mDNS device discovery is disabled.\n' +
-            'Fix: sudo systemctl enable --now avahi-daemon\n' +
-            'Install: sudo apt install avahi-daemon avahi-utils  (Debian/Ubuntu)\n' +
-            '         sudo pacman -S avahi                        (Arch)\n' +
-            '         sudo dnf install avahi avahi-tools          (Fedora)',
-        });
+      // Find matching SRV record
+      const srv = allRecords.find(x => x.type === 'SRV' && x.name === instanceFqdn);
+      const txtR = allRecords.find(x => x.type === 'TXT' && x.name === instanceFqdn);
+
+      const port = srv ? (srv.data.port || 0) : 0;
+      const host = srv ? srv.data.target : null;
+
+      // Parse TXT
+      const txt = {};
+      if (txtR && Array.isArray(txtR.data)) {
+        for (const buf of txtR.data) {
+          const str = Buffer.isBuffer(buf) ? buf.toString() : String(buf);
+          const eq = str.indexOf('=');
+          if (eq > 0) txt[str.slice(0, eq)] = str.slice(eq + 1);
+        }
       }
-    });
-    proc.on('error', (err) => {
-      console.warn(`[mDNS] avahi-browse error for ${svc.type}: ${err.message}`);
-      if (!avahiErrorSent && err.code === 'ENOENT') {
-        avahiErrorSent = true;
-        process.send && process.send({
-          type: 'mdns-error',
-          code: 'AVAHI_NOT_FOUND',
-          message:
-            'avahi-browse not found — mDNS device discovery is disabled.\n' +
-            'Install: sudo apt install avahi-daemon avahi-utils  (Debian/Ubuntu)\n' +
-            '         sudo pacman -S avahi                        (Arch)\n' +
-            '         sudo dnf install avahi avahi-tools          (Fedora)\n' +
-            'Then: sudo systemctl enable --now avahi-daemon',
+
+      if (host && aRecords[host]) {
+        // All info available inline
+        const ip = aRecords[host];
+        active.set(key, { name: instanceName, type: svc.type });
+        onUp({ name: instanceName, type: svc.type, host, addresses: [ip], port, txt, family: svc.family });
+      } else if (host) {
+        // SRV found but no A record yet — store and resolve
+        pending.set(key, { svc, instanceName, host, port, txt });
+        resolveHost(host, (ip) => {
+          if (!pending.has(key)) return; // already resolved or gone
+          pending.delete(key);
+          if (active.has(key)) return;
+          active.set(key, { name: instanceName, type: svc.type });
+          onUp({ name: instanceName, type: svc.type, host, addresses: ip ? [ip] : [], port, txt, family: svc.family });
         });
+      } else {
+        // PTR only — no SRV yet, query for it
+        pending.set(key, { svc, instanceName, host: null, port: 0, txt });
+        try {
+          mdns.query({ questions: [
+            { name: instanceFqdn, type: 'SRV' },
+            { name: instanceFqdn, type: 'TXT' },
+          ]});
+        } catch (_) {}
       }
-    });
-    proc.on('close', (code) => {
-      const idx = browseProcs.indexOf(proc);
-      if (idx >= 0) browseProcs.splice(idx, 1);
-    });
-  }
+    }
+
+    // Try to resolve pending entries that now have A records
+    for (const [key, info] of pending) {
+      if (!info.host || active.has(key)) continue;
+      if (aRecords[info.host]) {
+        pending.delete(key);
+        active.set(key, { name: info.instanceName, type: info.svc.type });
+        onUp({ name: info.instanceName, type: info.svc.type, host: info.host,
+          addresses: [aRecords[info.host]], port: info.port, txt: info.txt, family: info.svc.family });
+      }
+    }
+  });
 
   return {
     stop() {
-      for (const p of [...browseProcs, ...lookupProcs]) {
-        try { p.kill(); } catch (_) {}
-      }
-      browseProcs.length = 0;
-      lookupProcs.length = 0;
+      clearInterval(refreshTimer);
+      try { mdns.removeAllListeners('response'); } catch (_) {}
+      active.clear();
+      pending.clear();
       console.log('[mDNS] Stopped');
     },
   };
@@ -397,7 +395,7 @@ function browseDnsSd(callbacks) {
 }
 
 function browse(callbacks) {
-  if (IS_LINUX) return browseAvahi(callbacks);
+  if (IS_LINUX) return browseMdns(callbacks);
   return browseDnsSd(callbacks);
 }
 
