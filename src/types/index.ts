@@ -112,6 +112,7 @@ export type PtpClockRole = 'grandmaster' | 'boundary' | 'slave';
 export interface PtpClock {
   clockIdentity: string;
   displayId: string;
+  senderIp: string | null;
   domainNumber: number;
   isGrandmaster: boolean;
   clockRole: PtpClockRole | null;

@@ -183,11 +183,19 @@ function parseHeaderV1(buf) {
   const version = buf.readUInt8(0);
   if (version !== 1) return null;
 
-  // PTPv1: byte 1 = versionNetwork = 0x01
-  // PTPv2: byte 1 = reserved(4)|versionPTP(4) = 0x02
-  // A PTPv2 Delay_Req has byte 0 = 0x01 (messageType=1) → must reject via this check
-  const versionNetwork = buf.readUInt8(1);
-  if (versionNetwork !== 1) return null;
+  // PTPv2 Delay_Req has byte 0 = 0x01 (messageType=1, transportSpecific=0).
+  // Distinguish from PTPv1 using the messageLength field:
+  //   PTPv2: bytes 2-3 = messageLength (44 for Delay_Req, always >= 34)
+  //   PTPv1: bytes 2-17 = subdomain string — messageLength would be a large/odd value
+  // Best discriminant: PTPv1 subdomain bytes 2-17 contain printable ASCII or nulls,
+  // PTPv2 messageLength at bytes 2-3 would be 0x002C (44) for Delay_Req.
+  // Use: if buf[2..3] looks like a short length (< 300) AND buf[4] is a domain number
+  // (0-255 but PTPv2 domain is typically 0-127), it's more likely PTPv2.
+  // Simpler: PTPv1 subdomain field offset 2-17 starts with a printable ASCII char
+  // OR is null-padded. PTPv2 messageLength at bytes 2-3 = 0x002C = 44 → buf[2]=0x00.
+  // If buf[2] === 0x00, it's PTPv2 (messageLength high byte is 0 for short messages).
+  const byte2 = buf.readUInt8(2);
+  if (byte2 === 0x00) return null; // PTPv2 messageLength high byte is always 0x00
 
   const messageType = buf.readUInt8(18);
   const subdomain   = buf.toString('ascii', 2, 18).replace(/\0/g, '').trim();
@@ -415,6 +423,7 @@ function handlePacketV1(buf, header, rinfo) {
   const clock = getOrCreate(clockIdentity, domainNumber);
   clock.lastSeen = Date.now();
   clock.announceCount++; // treat v1 Sync as announce equivalent
+  if (rinfo && rinfo.address) clock.senderIp = rinfo.address;
 
   clock.grandmasterIdentity        = syncInfo.grandmasterIdentity;
   clock.grandmasterPriority1       = null;
@@ -469,6 +478,7 @@ function handlePacket(buf, rinfo) {
 
   const clock = getOrCreate(clockIdentity, domainNumber);
   clock.lastSeen = Date.now();
+  if (rinfo && rinfo.address) clock.senderIp = rinfo.address;
 
   switch (messageType) {
     case MSG_ANNOUNCE: {
@@ -601,6 +611,7 @@ function emitUpdate() {
       list.push({
         clockIdentity:        clock.clockIdentity,
         displayId:            formatClockId(clock.clockIdentity),
+        senderIp:             clock.senderIp || null,
         domainNumber:         clock.domainNumber,
         isGrandmaster:        clock.isGrandmaster,
         clockRole,

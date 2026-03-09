@@ -3,7 +3,7 @@ import { PtpClock, DanteDevice } from '../types';
 
 interface PtpPanelProps {
   clocks: PtpClock[];
-  danteDevices: DanteDevice[];
+  allDevices: DanteDevice[];
 }
 
 function clockClassLabel(cls: number | null): string {
@@ -83,10 +83,6 @@ function clockIdentityToMac(id: string): string | null {
 
 /**
  * Build a map: normalised EUI-48 MAC -> device name.
- * Handles macAddress stored as:
- *   - 16-char EUI-64 hex string (Dante mDNS TXT 'id'): "001dc1fffe506217"
- *   - 12-char EUI-48 hex string: "001dc1506217"
- *   - Colon-separated: "00:1d:c1:50:62:17"
  */
 function buildMacMap(devices: DanteDevice[]): Map<string, string> {
   const m = new Map<string, string>();
@@ -99,7 +95,23 @@ function buildMacMap(devices: DanteDevice[]): Map<string, string> {
   return m;
 }
 
-const ClockCard: React.FC<{ clock: PtpClock; macMap: Map<string, string> }> = ({ clock, macMap }) => {
+/**
+ * Build a map: IP address -> device name.
+ * Covers Dante, RAVENNA, AES67 devices discovered via mDNS.
+ */
+function buildIpMap(devices: DanteDevice[]): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const d of devices) {
+    if (d.ip && d.name) m.set(d.ip, d.name);
+    // Also index secondary addresses if present
+    for (const addr of (d.addresses ?? [])) {
+      if (addr && d.name) m.set(addr, d.name);
+    }
+  }
+  return m;
+}
+
+const ClockCard: React.FC<{ clock: PtpClock; macMap: Map<string, string>; ipMap: Map<string, string> }> = ({ clock, macMap, ipMap }) => {
   const [expanded, setExpanded] = useState(false);
 
   const borderColor = clock.clockRole === 'grandmaster'
@@ -145,14 +157,24 @@ const ClockCard: React.FC<{ clock: PtpClock; macMap: Map<string, string> }> = ({
           <div className="flex flex-col min-w-0">
             {(() => {
               const mac = clockIdentityToMac(clock.clockIdentity);
-              const deviceName = mac ? macMap.get(mac) : undefined;
+              const deviceName =
+                (clock.senderIp ? ipMap.get(clock.senderIp) : undefined) ??
+                (mac ? macMap.get(mac) : undefined);
+              const subtitle = deviceName
+                ? (clock.senderIp ?? clock.displayId)
+                : null;
               return deviceName ? (
                 <>
                   <span className="text-xs font-medium text-white truncate">{deviceName}</span>
-                  <span className="text-[10px] font-mono text-slate-500 truncate">{clock.displayId}</span>
+                  <span className="text-[10px] font-mono text-slate-500 truncate">{subtitle}</span>
                 </>
               ) : (
-                <span className="text-xs font-mono text-slate-200 truncate">{clock.displayId}</span>
+                <>
+                  <span className="text-xs font-mono text-slate-200 truncate">{clock.displayId}</span>
+                  {clock.senderIp && (
+                    <span className="text-[10px] font-mono text-slate-500 truncate">{clock.senderIp}</span>
+                  )}
+                </>
               );
             })()}
           </div>
@@ -180,6 +202,9 @@ const ClockCard: React.FC<{ clock: PtpClock; macMap: Map<string, string> }> = ({
           )}
           {clock.ptpProfile && (
             <Row label="Profile"        value={clock.ptpProfile} />
+          )}
+          {clock.senderIp && (
+            <Row label="Source IP"      value={clock.senderIp} />
           )}
           {clock.grandmasterDisplayId && !clock.isGrandmaster && (() => {
             const gmMac = clock.grandmasterIdentity ? clockIdentityToMac(clock.grandmasterIdentity) : null;
@@ -243,8 +268,9 @@ const ClockCard: React.FC<{ clock: PtpClock; macMap: Map<string, string> }> = ({
   );
 };
 
-const PtpPanel: React.FC<PtpPanelProps> = ({ clocks, danteDevices }) => {
-  const macMap = useMemo(() => buildMacMap(danteDevices), [danteDevices]);
+const PtpPanel: React.FC<PtpPanelProps> = ({ clocks, allDevices }) => {
+  const macMap = useMemo(() => buildMacMap(allDevices), [allDevices]);
+  const ipMap  = useMemo(() => buildIpMap(allDevices),  [allDevices]);
   const domains = [...new Set(clocks.map(c => c.domainNumber))].sort((a, b) => a - b);
 
   return (
@@ -281,7 +307,9 @@ const PtpPanel: React.FC<PtpPanelProps> = ({ clocks, danteDevices }) => {
               <div key={domain} className="mb-3">
                 {domains.length > 1 && (() => {
                   const gmMac = gm?.grandmasterIdentity ? clockIdentityToMac(gm.grandmasterIdentity) : null;
-                  const gmName = gmMac ? macMap.get(gmMac) : undefined;
+                  const gmName =
+                    (gm?.senderIp ? ipMap.get(gm.senderIp) : undefined) ??
+                    (gmMac ? macMap.get(gmMac) : undefined);
                   const gmLabel = gm ? (gmName ? `${gmName} (${gm.displayId})` : gm.displayId) : 'No grandmaster';
                   return (
                     <div className="text-xs text-slate-500 mb-1 px-1">
@@ -290,7 +318,7 @@ const PtpPanel: React.FC<PtpPanelProps> = ({ clocks, danteDevices }) => {
                   );
                 })()}
                 {domainClocks.map(clock => (
-                  <ClockCard key={clock.clockIdentity} clock={clock} macMap={macMap} />
+                  <ClockCard key={clock.clockIdentity} clock={clock} macMap={macMap} ipMap={ipMap} />
                 ))}
               </div>
             );

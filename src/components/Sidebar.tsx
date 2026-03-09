@@ -150,7 +150,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
         {/* PTP Tab */}
         {activeTab === 'ptp' && (
-          <PtpPanel clocks={ptpClocks} danteDevices={danteDevices} />
+          <PtpPanel clocks={ptpClocks} allDevices={danteDevices} />
         )}
 
         {/* Devices Tab */}
