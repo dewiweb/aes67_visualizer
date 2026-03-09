@@ -115,10 +115,10 @@ const StreamCard: React.FC<StreamCardProps> = ({
         
         {stream.sourceType === 'manual' ? (
           <FileText size={14} className="text-green-400 shrink-0" />
-        ) : stream.dante && stream.danteDevice?.isRAVENNA ? (
-          <Radio size={14} className="text-teal-400 shrink-0" />
-        ) : stream.dante ? (
+        ) : stream.streamFamily === 'dante' || stream.streamFamily === 'dante-aes67' ? (
           <Radio size={14} className="text-purple-400 shrink-0" />
+        ) : stream.streamFamily === 'ravenna' || stream.streamFamily === 'ravenna-aes67' ? (
+          <Radio size={14} className="text-teal-400 shrink-0" />
         ) : (
           <Radio size={14} className="text-blue-400 shrink-0" />
         )}
@@ -144,19 +144,34 @@ const StreamCard: React.FC<StreamCardProps> = ({
           <span className="bg-slate-700 px-1.5 py-0.5 rounded text-slate-300">
             {stream.channels}ch
           </span>
-          {stream.dante && (
-            <span className="bg-purple-900/50 px-1.5 py-0.5 rounded text-purple-300">
+          {stream.streamFamily === 'dante' && (
+            <span className="bg-purple-900/50 px-1.5 py-0.5 rounded text-purple-300" title="Dante native (PTPv1)">
               Dante
             </span>
           )}
-          {stream.danteDevice?.isRAVENNA && (
-            <span className="bg-teal-900/50 px-1.5 py-0.5 rounded text-teal-300">
+          {stream.streamFamily === 'dante-aes67' && (
+            <span className="bg-purple-900/50 px-1.5 py-0.5 rounded text-purple-300" title="Dante in AES67 interop mode (PTPv2)">
+              Dante+AES67
+            </span>
+          )}
+          {stream.streamFamily === 'ravenna' && (
+            <span className="bg-teal-900/50 px-1.5 py-0.5 rounded text-teal-300" title="RAVENNA native">
               RAVENNA
             </span>
           )}
-          {stream.danteDevice?.isAES67 && !stream.danteDevice?.isRAVENNA && (
-            <span className="bg-blue-900/50 px-1.5 py-0.5 rounded text-blue-300">
+          {stream.streamFamily === 'ravenna-aes67' && (
+            <span className="bg-teal-900/50 px-1.5 py-0.5 rounded text-teal-300" title="RAVENNA with AES67 clock (PTPv2)">
+              RAVENNA+AES67
+            </span>
+          )}
+          {stream.streamFamily === 'aes67' && (
+            <span className="bg-blue-900/50 px-1.5 py-0.5 rounded text-blue-300" title="Generic AES67">
               AES67
+            </span>
+          )}
+          {!stream.streamFamily && stream.dante && (
+            <span className="bg-purple-900/50 px-1.5 py-0.5 rounded text-purple-300">
+              Dante
             </span>
           )}
           {stream.requiresSubscription && (

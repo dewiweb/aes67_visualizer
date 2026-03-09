@@ -148,8 +148,9 @@ function validateSdp(sdp, raw) {
   // ── Dante streams (keyword "Dante" in SDP k= field) ───────────────────────
   sdp.dante = sdp.keywords === 'Dante';
 
-  sdp.description = sdp.description || media.description || '';
-  sdp.info        = sdp.description || null;
+  sdp.description  = sdp.description || media.description || '';
+  sdp.info         = sdp.description || null;
+  sdp.streamFamily = detectStreamFamily(sdp);
 
   return sdp;
 }
@@ -162,13 +163,44 @@ function isPtpClocked(sdp) {
 }
 
 /**
- * Determine protocol family from a validated SDP object.
- * Returns 'dante' | 'ravenna' | 'aes67'
+ * Determine the stream protocol family from a validated SDP object.
+ *
+ * Returns one of:
+ *   'dante'         — Dante native (PTPv1, k=Dante, no AES67 clock ref)
+ *   'dante-aes67'   — Dante in AES67 interop mode (k=Dante + IEEE1588-2008 PTP)
+ *   'ravenna'       — RAVENNA native (Lawo/Merging tool, no strict AES67 ts-refclk)
+ *   'ravenna-aes67' — RAVENNA with AES67 clock ref (ts-refclk IEEE1588-2008)
+ *   'aes67'         — Generic AES67 (not identifiable as Dante or RAVENNA)
+ *
+ * Key facts:
+ *   - Dante native uses PTPv1 (IEEE1588-2002); no ts-refclk in SDP
+ *   - Dante+AES67 uses PTPv2 (IEEE1588-2008); ts-refclk present; k=Dante still set
+ *   - RAVENNA and RAVENNA+AES67 are structurally very similar; distinction is
+ *     whether the SDP has a strict `a=ts-refclk:ptp=IEEE1588-2008` attribute
+ *   - RAVENNA native may use `a=clock-domain:PTP V2` instead of `a=ts-refclk`
+ */
+function detectStreamFamily(sdp) {
+  const isDante   = !!sdp.dante; // k=Dante in SDP
+  const isRavenna = !!(sdp.tool && /lawo|ravenna|merging|l-isa/i.test(sdp.tool));
+  const hasAes67Clock = sdp.ptpVersion === 'IEEE1588-2008'; // ts-refclk PTPv2
+  const hasPtpV1Clock = sdp.ptpVersion === 'IEEE1588-2002'; // Dante native PTPv1
+
+  if (isDante) {
+    return (hasAes67Clock && !hasPtpV1Clock) ? 'dante-aes67' : 'dante';
+  }
+  if (isRavenna) {
+    return hasAes67Clock ? 'ravenna-aes67' : 'ravenna';
+  }
+  return 'aes67';
+}
+
+/**
+ * @deprecated Use detectStreamFamily instead.
  */
 function detectFamily(sdp) {
-  if (sdp.dante) return 'dante';
-  // RAVENNA streams have tool strings containing "Lawo" / "RAVENNA" or specific PTP domains
-  if (sdp.tool && /lawo|ravenna|merging/i.test(sdp.tool)) return 'ravenna';
+  const f = detectStreamFamily(sdp);
+  if (f === 'dante' || f === 'dante-aes67') return 'dante';
+  if (f === 'ravenna' || f === 'ravenna-aes67') return 'ravenna';
   return 'aes67';
 }
 
@@ -182,6 +214,7 @@ module.exports = {
   validateSdp,
   isPtpClocked,
   detectFamily,
+  detectStreamFamily,
   SUPPORTED_CODECS,
   SUPPORTED_SAMPLE_RATES,
 };

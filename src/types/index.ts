@@ -1,3 +1,11 @@
+/** Protocol family of a stream, from SDP analysis */
+export type StreamFamily =
+  | 'dante'         // Dante native — PTPv1, k=Dante, no AES67 clock ref
+  | 'dante-aes67'   // Dante in AES67 interop — k=Dante + IEEE1588-2008 PTP
+  | 'ravenna'       // RAVENNA native — Lawo/Merging tool, clock-domain attribute
+  | 'ravenna-aes67' // RAVENNA + strict AES67 ts-refclk IEEE1588-2008
+  | 'aes67';        // Generic AES67 — not identifiable as Dante or RAVENNA
+
 export interface Stream {
   id: string;
   name: string;
@@ -11,6 +19,8 @@ export interface Stream {
   unsupportedReason?: string;
   sourceType: 'sap' | 'manual';
   manual: boolean;
+  /** Protocol family detected from SDP content */
+  streamFamily?: StreamFamily;
   dante?: boolean;
   danteDevice?: {
     host: string;
