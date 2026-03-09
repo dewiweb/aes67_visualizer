@@ -423,51 +423,88 @@ function getOffsetStats(clockKey) {
 function handlePacketV1(buf, header, rinfo) {
   const { clockIdentity, domainNumber, messageType } = header;
 
-  // PTPv1 Sync (type 1) carries full GM info — equivalent of v2 Announce
-  if (messageType !== 1) return; // only process Sync for now
+  // PTPv1 Sync (type 1) carries full GM info — equivalent of v2 Announce.
+  // PTPv1 Delay_Req (type 2) is sent by every slave — use it to discover all slave clocks.
+  // Other message types (Follow_Up=8, Delay_Resp=9) are ignored.
+  if (messageType === 1) {
+    // ── Sync: full GM info available ──────────────────────────────────────────
+    const syncInfo = parseV1SyncBody(buf, header);
+    if (!syncInfo) return;
 
-  const syncInfo = parseV1SyncBody(buf, header);
-  if (!syncInfo) return;
+    const clockKey = `${clockIdentity}@${domainNumber}`;
+    const clock = getOrCreate(clockIdentity, domainNumber);
+    clock.lastSeen = Date.now();
+    clock.announceCount++;
+    if (rinfo && rinfo.address) clock.senderIp = rinfo.address;
 
-  const clockKey = `${clockIdentity}@${domainNumber}`;
-  const clock = getOrCreate(clockIdentity, domainNumber);
-  clock.lastSeen = Date.now();
-  clock.announceCount++; // treat v1 Sync as announce equivalent
-  if (rinfo && rinfo.address) clock.senderIp = rinfo.address;
+    clock.grandmasterIdentity        = syncInfo.grandmasterIdentity;
+    clock.grandmasterPriority1       = null;
+    clock.grandmasterPriority2       = null;
+    clock.clockClass                 = null;
+    clock.clockAccuracy              = syncInfo.clockAccuracy;
+    clock.stepsRemoved               = syncInfo.stepsRemoved;
+    clock.timeSource                 = syncInfo.timeSource;
+    clock.timeSourceCode             = syncInfo.timeSourceCode;
+    clock.currentUtcOffset           = syncInfo.currentUtcOffset;
+    clock.grandmasterClockStratum    = syncInfo.grandmasterClockStratum;
+    clock.grandmasterPreferred       = syncInfo.grandmasterPreferred;
+    clock.grandmasterIsBoundaryClock = syncInfo.grandmasterIsBoundaryClock;
+    clock.ptpVersion                 = 1;
+    clock.ptpTimescale               = false;
+    clock.timeTraceable              = false;
+    clock.freqTraceable              = false;
+    clock.ptpProfile                 = 'Dante (PTPv1)';
+    clock.isGrandmaster              = (clockIdentity === syncInfo.grandmasterIdentity);
 
-  clock.grandmasterIdentity        = syncInfo.grandmasterIdentity;
-  clock.grandmasterPriority1       = null;
-  clock.grandmasterPriority2       = null;
-  clock.clockClass                 = null;
-  clock.clockAccuracy              = syncInfo.clockAccuracy;
-  clock.stepsRemoved               = syncInfo.stepsRemoved;
-  clock.timeSource                 = syncInfo.timeSource;
-  clock.timeSourceCode             = syncInfo.timeSourceCode;
-  clock.currentUtcOffset           = syncInfo.currentUtcOffset;
-  clock.grandmasterClockStratum    = syncInfo.grandmasterClockStratum;
-  clock.grandmasterPreferred       = syncInfo.grandmasterPreferred;
-  clock.grandmasterIsBoundaryClock = syncInfo.grandmasterIsBoundaryClock;
-  clock.ptpVersion                 = 1;
-  clock.ptpTimescale               = false;
-  clock.timeTraceable              = false;
-  clock.freqTraceable              = false;
-  clock.ptpProfile                 = 'Dante (PTPv1)';
-
-  clock.isGrandmaster = (clockIdentity === syncInfo.grandmasterIdentity);
-
-  // Mark other clocks in this domain that are no longer grandmaster
-  for (const [key, c] of clocks) {
-    if (c.domainNumber === domainNumber && key !== clockKey) {
-      if (c.isGrandmaster && clock.isGrandmaster) c.isGrandmaster = false;
+    // Mark other clocks in this domain that are no longer grandmaster
+    for (const [key, c] of clocks) {
+      if (c.domainNumber === domainNumber && key !== clockKey) {
+        if (c.isGrandmaster && clock.isGrandmaster) c.isGrandmaster = false;
+      }
     }
-  }
 
-  // PTPv1 BC flag is explicit — override heuristic
-  if (syncInfo.grandmasterIsBoundaryClock) {
-    clock.clockRole = 'boundary';
-  }
+    // PTPv1 BC flag is explicit — override heuristic
+    if (syncInfo.grandmasterIsBoundaryClock) {
+      clock.clockRole = 'boundary';
+    }
 
-  emitUpdate();
+    // Propagate GM info to already-known slaves in this domain that lack it
+    for (const [, c] of clocks) {
+      if (c.domainNumber === domainNumber && c.ptpVersion === 1 && !c.grandmasterIdentity) {
+        c.grandmasterIdentity     = syncInfo.grandmasterIdentity;
+        c.grandmasterClockStratum = syncInfo.grandmasterClockStratum;
+        c.clockAccuracy           = syncInfo.clockAccuracy;
+        c.ptpProfile              = 'Dante (PTPv1)';
+      }
+    }
+
+    emitUpdate();
+
+  } else if (messageType === 2) {
+    // ── Delay_Req: sent by every slave clock — register it ───────────────────
+    // Delay_Req body has no GM info; inherit from the domain's known GM if available.
+    const clock = getOrCreate(clockIdentity, domainNumber);
+    clock.lastSeen = Date.now();
+    clock.syncCount++; // reuse syncCount as "activity counter" for slaves
+    if (rinfo && rinfo.address) clock.senderIp = rinfo.address;
+    clock.ptpVersion  = clock.ptpVersion  ?? 1;
+    clock.ptpProfile  = clock.ptpProfile  ?? 'Dante (PTPv1)';
+    clock.isGrandmaster = false;
+
+    // Inherit GM info from the domain's grandmaster if we have it
+    if (!clock.grandmasterIdentity) {
+      for (const [, c] of clocks) {
+        if (c.domainNumber === domainNumber && c.isGrandmaster && c.grandmasterIdentity) {
+          clock.grandmasterIdentity     = c.grandmasterIdentity;
+          clock.grandmasterClockStratum = c.grandmasterClockStratum;
+          clock.clockAccuracy           = c.clockAccuracy;
+          break;
+        }
+      }
+    }
+
+    emitUpdate();
+  }
 }
 
 // ── Main packet handler ───────────────────────────────────────────────────────
