@@ -36,12 +36,11 @@
  *   offset 61: stepsRemoved (2 bytes)
  *   offset 63: timeSource (1 byte)
  *
- * PTPv1 header layout (40 bytes, big-endian):
- *   offset  0: versionPTP (1 byte) = 0x01
- *   offset  1: versionNetwork (1 byte) = 0x01
- *   offset  2: subdomain[16 bytes] — "\0\0\0\0" for Dante default domain
- *   offset 18: messageType (1 byte) — 1=Sync, 2=Delay_Req, 8=FollowUp, 9=DelayResp
- *   offset 19: sourceCommunicationTechnology (1 byte) — 1=UDP/IPv4
+ * PTPv1 header layout (40 bytes, big-endian) — confirmed from real Dante packet captures:
+ *   offset  0: versionPTP (1 byte) = 0x00  ← value 0, NOT 1
+ *   offset  1: versionNetwork (1 byte) = 0x01  (UDP/IPv4)
+ *   offset  2: messageType (2 bytes) — 0x0001=Sync, 0x0002=Delay_Req, 0x0008=Follow_Up, 0x0009=Delay_Resp
+ *   offset  4: subdomain[16 bytes] — '_DFLT\0...' for Dante default domain
  *   offset 20: sourceUuid[6 bytes] — source MAC address (EUI-48)
  *   offset 26: sourcePortId (2 bytes)
  *   offset 28: sequenceId (2 bytes)
@@ -174,34 +173,45 @@ function parseHeader(buf) {
 
 /**
  * Parse a PTPv1 (IEEE 1588-2002) packet header.
- * Returns null if buf is too short or version byte is not 1.
- * Note: PTPv1 header is 40 bytes (vs 34 for v2), and the sourceUuid is
- * a 6-byte EUI-48 MAC address at offset 20 (not an 8-byte EUI-64).
+ * Returns null if buf is too short or not a valid PTPv1 packet.
+ * PTPv1 header is 40 bytes; sourceUuid is a 6-byte EUI-48 MAC at offset 20.
+ * Layout confirmed from real Dante packet captures:
+ *   buf[0]=0x00 (versionPTP), buf[1]=0x01 (versionNetwork), buf[2..3]=messageType,
+ *   buf[4..19]=subdomain ('_DFLT\0...' for Dante default), buf[20..25]=sourceUuid.
  */
 function parseHeaderV1(buf) {
   if (buf.length < 40) return null;
-  const version = buf.readUInt8(0);
-  if (version !== 1) return null;
 
-  // PTPv2 Delay_Req has byte 0 = 0x01 (messageType=1, transportSpecific=0).
-  // Distinguish from PTPv1 using the messageLength field:
-  //   PTPv2: bytes 2-3 = messageLength (44 for Delay_Req, always >= 34)
-  //   PTPv1: bytes 2-17 = subdomain string — messageLength would be a large/odd value
-  // Best discriminant: PTPv1 subdomain bytes 2-17 contain printable ASCII or nulls,
-  // PTPv2 messageLength at bytes 2-3 would be 0x002C (44) for Delay_Req.
-  // Use: if buf[2..3] looks like a short length (< 300) AND buf[4] is a domain number
-  // (0-255 but PTPv2 domain is typically 0-127), it's more likely PTPv2.
-  // Simpler: PTPv1 subdomain field offset 2-17 starts with a printable ASCII char
-  // OR is null-padded. PTPv2 messageLength at bytes 2-3 = 0x002C = 44 → buf[2]=0x00.
-  // If buf[2] === 0x00, it's PTPv2 (messageLength high byte is 0 for short messages).
-  const byte2 = buf.readUInt8(2);
-  if (byte2 === 0x00) return null; // PTPv2 messageLength high byte is always 0x00
+  // Real IEEE 1588-2002 (PTPv1) header layout, confirmed from Dante packet captures:
+  //   offset  0: versionPTP (1B)       = 0x00  ← NOT 0x01, PTPv1 uses value 0
+  //   offset  1: versionNetwork (1B)   = 0x01  (UDP/IPv4)
+  //   offset  2: messageType (2B)      = 0x0001 (Sync), 0x0002 (Delay_Req), etc.
+  //   offset  4: subdomain[16B]        = '_DFLT\0...' for Dante default domain
+  //   offset 20: sourceUuid[6B]        = EUI-48 MAC address
+  //   offset 26: sourcePortId (2B)
+  //   offset 28: sequenceId (2B)
+  //   offset 30: control (1B)
+  //   offset 31: logMessagePeriod (1B)
 
-  const messageType = buf.readUInt8(18);
-  const subdomain   = buf.toString('ascii', 2, 18).replace(/\0/g, '').trim();
+  const versionPTP     = buf.readUInt8(0);
+  const versionNetwork = buf.readUInt8(1);
+
+  // PTPv1 packets: versionPTP=0x00, versionNetwork=0x01
+  // PTPv2 packets: buf[0] low nibble = messageType, buf[1] low nibble = 0x02 (version)
+  // Discriminant: versionPTP must be 0 AND versionNetwork must be 1
+  if (versionPTP !== 0x00 || versionNetwork !== 0x01) return null;
+
+  // Additional check: subdomain at offset 4 must contain printable ASCII or nulls
+  // Dante uses '_DFLT' (0x5f...), other implementors use other ASCII strings
+  const subByte4 = buf.readUInt8(4);
+  const subByte5 = buf.readUInt8(5);
+  // Must be printable ASCII (0x20-0x7e) or null — reject garbage
+  if (subByte4 !== 0x00 && (subByte4 < 0x20 || subByte4 > 0x7e)) return null;
+
+  const messageType = buf.readUInt16BE(2); // 2-byte field at offset 2
+  const subdomain   = buf.toString('ascii', 4, 20).replace(/\0/g, '').trim();
   const uuid        = buf.slice(20, 26);
   // Build a pseudo EUI-64 clockIdentity from EUI-48 by inserting FF-FE
-  // (same convention as IEEE 802.1AB / EUI-64 from EUI-48)
   const clockIdentity = [
     uuid[0], uuid[1], uuid[2], 0xff, 0xfe, uuid[3], uuid[4], uuid[5],
   ].map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('-');
@@ -462,23 +472,8 @@ function handlePacketV1(buf, header, rinfo) {
 
 // ── Main packet handler ───────────────────────────────────────────────────────
 
-// DEBUG: rate-limit logging (max 1 log per unique byte[0..3] pattern per 10s)
-const _debugSeen = new Map();
-function _debugLog(buf, rinfo) {
-  const key = buf.slice(0, 4).toString('hex');
-  const now = Date.now();
-  if (!_debugSeen.has(key) || now - _debugSeen.get(key) > 10000) {
-    _debugSeen.set(key, now);
-    const hex8 = Array.from(buf.slice(0, 8)).map(b => b.toString(16).padStart(2,'0')).join(' ');
-    console.log(`[PTP DEBUG] src=${rinfo?.address} len=${buf.length} bytes[0..7]=${hex8}`);
-  }
-}
-
 function handlePacket(buf, rinfo) {
-  // DEBUG: log all unique packet patterns to diagnose PTPv1 detection
-  _debugLog(buf, rinfo);
-
-  // Try PTPv1 first (Dante default) — v1 byte 0 = 0x01, v2 byte 1 low nibble = 0x02
+  // Try PTPv1 first (Dante default) — v1 buf[0]=0x00, buf[1]=0x01; v2 buf[1] low nibble = 0x02
   const v1header = parseHeaderV1(buf);
   if (v1header) {
     handlePacketV1(buf, v1header, rinfo);
