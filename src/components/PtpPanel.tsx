@@ -161,8 +161,16 @@ const ClockCard: React.FC<{ clock: PtpClock; macMap: Map<string, string> }> = ({
           <Row label="Domain"           value={clock.domainNumber} />
           <Row label="Priority 1"       value={clock.priority1} />
           <Row label="Priority 2"       value={clock.priority2} />
-          <Row label="Clock Class"      value={clockClassLabel(clock.clockClass)} />
+          {clock.clockClass != null && (
+            <Row label="Clock Class"    value={clockClassLabel(clock.clockClass)} />
+          )}
           <Row label="Accuracy"         value={clock.clockAccuracy} />
+          {clock.grandmasterClockStratum != null && (
+            <Row label="GM Stratum (v1)" value={`${clock.grandmasterClockStratum} — ${clock.clockAccuracy || ''}`} />
+          )}
+          {clock.grandmasterIsBoundaryClock != null && (
+            <Row label="GM is BC"        value={clock.grandmasterIsBoundaryClock ? '✓ Yes (explicit)' : '✗ No'} />
+          )}
           <Row label="Time Source"      value={clock.timeSource} />
           <Row label="UTC Offset"       value={clock.currentUtcOffset != null ? `${clock.currentUtcOffset}s` : null} />
           <Row label="Steps Removed"    value={clock.stepsRemoved} />

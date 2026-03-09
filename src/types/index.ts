@@ -126,6 +126,8 @@ export interface PtpClock {
   priority2: number | null;
   clockClass: number | null;
   clockAccuracy: string | null;
+  grandmasterClockStratum: number | null;
+  grandmasterIsBoundaryClock: boolean | null;
   timeSource: string | null;
   stepsRemoved: number | null;
   currentUtcOffset: number | null;

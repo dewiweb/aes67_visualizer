@@ -1,17 +1,19 @@
 /**
  * PTP IEEE 1588 Protocol Parser
  *
- * Listens directly on UDP ports 319 (event) and 320 (general) for PTP packets.
- * Parses Announce, Sync, Follow_Up, Delay_Resp messages.
+ * Supports PTPv1 (IEEE 1588-2002, used by Dante by default) and
+ * PTPv2 (IEEE 1588-2008/2019, used by RAVENNA, AES67, and Dante in AES67 mode).
  *
- * Based on:
- *   - IEEE 1588-2008 / 1588-2019 specification
- *   - soundondigital/ravennakit ptp_definitions.hpp, ptp_message_header.hpp, ptp_announce_message.hpp
- *   - martim01/pam ptpmonkey library
+ * Key protocol facts (from Audinate/Luminex documentation):
+ *   - Dante devices use PTPv1 by default (domain 0, subdomain "DFLT")
+ *   - Dante+AES67 devices run PTPv1 (Dante domain) AND PTPv2 (AES67 domain) simultaneously
+ *   - The AES67-enabled Dante device acts as Boundary Clock bridging both PTP versions
+ *   - RAVENNA and pure AES67 devices use PTPv2 only
+ *   - PTPv1 and PTPv2 are NOT backwards compatible
  *
- * PTP message header layout (34 bytes, big-endian):
+ * PTPv2 message header layout (34 bytes, big-endian):
  *   offset  0: transportSpecific(4) | messageType(4)
- *   offset  1: reserved(4) | versionPTP(4)
+ *   offset  1: reserved(4) | versionPTP(4)  ← version = 0x02
  *   offset  2: messageLength (2 bytes)
  *   offset  4: domainNumber (1 byte)
  *   offset  5: sdoIdMinor (1 byte)
@@ -23,7 +25,7 @@
  *   offset 32: controlField (1 byte)
  *   offset 33: logMessageInterval (1 byte)
  *
- * Announce body (after 34-byte header, 30 bytes):
+ * PTPv2 Announce body (after 34-byte header):
  *   offset 34: originTimestamp (10 bytes)
  *   offset 44: currentUtcOffset (2 bytes, signed)
  *   offset 46: reserved (1 byte)
@@ -33,6 +35,34 @@
  *   offset 53: grandmasterIdentity (8 bytes)
  *   offset 61: stepsRemoved (2 bytes)
  *   offset 63: timeSource (1 byte)
+ *
+ * PTPv1 header layout (40 bytes, big-endian):
+ *   offset  0: versionPTP (1 byte) = 0x01
+ *   offset  1: versionNetwork (1 byte) = 0x01
+ *   offset  2: subdomain[16 bytes] — "\0\0\0\0" for Dante default domain
+ *   offset 18: messageType (1 byte) — 1=Sync, 2=Delay_Req, 8=FollowUp, 9=DelayResp
+ *   offset 19: sourceCommunicationTechnology (1 byte) — 1=UDP/IPv4
+ *   offset 20: sourceUuid[6 bytes] — source MAC address (EUI-48)
+ *   offset 26: sourcePortId (2 bytes)
+ *   offset 28: sequenceId (2 bytes)
+ *   offset 30: control (1 byte)
+ *   offset 31: logMessagePeriod (1 byte)
+ *
+ * PTPv1 Sync body (after 40-byte header):
+ *   offset 40: originTimestamp (8 bytes)
+ *   offset 48: epochNumber (2 bytes)
+ *   offset 50: currentUTCOffset (2 bytes)
+ *   offset 52: grandmasterCommunicationTechnology (1 byte)
+ *   offset 53: grandmasterClockUuid[6 bytes] — grandmaster MAC address
+ *   offset 59: grandmasterPortId (2 bytes)
+ *   offset 61: grandmasterSequenceId (2 bytes)
+ *   offset 71: grandmasterClockStratum (1 byte) — clock quality (1=atomic, 4=OCXO, 8=free-running)
+ *   offset 72: grandmasterClockIdentifier[4] — "\0\0\0\0" for Dante
+ *   offset 76: grandmasterClockVariance (2 bytes)
+ *   offset 78: grandmasterPreferred (1 byte) — 0x01 if preferred master
+ *   offset 79: grandmasterIsBoundaryClock (1 byte) — 0x01 if BC
+ *   offset 83: localStepsRemoved (2 bytes)
+ *   offset 85: localClockStratum (1 byte)
  */
 
 'use strict';
@@ -106,7 +136,7 @@ function parseHeader(buf) {
   const byte1       = buf.readUInt8(1);
   const version     = byte1 & 0x0f;
 
-  if (version < 1 || version > 2) return null; // PTPv1 or PTPv2
+  if (version !== 2) return null; // PTPv2 only — v1 handled by parseHeaderV1
 
   const messageLength = buf.readUInt16BE(2);
   const domainNumber  = buf.readUInt8(4);
@@ -143,17 +173,105 @@ function parseHeader(buf) {
 }
 
 /**
- * Deduce a PTP profile label from clock class and time source.
- * References:
- *   AES67-2018 §9.1: clockClass=248, timeSource=INTERNAL_OSCILLATOR(0xa0) or PTP(0x40)
- *   RAVENNA: clockClass=135 (slave-only) or 248
- *   Dante: clockClass=135 (slave port) or 248 (master)
- *   SMPTE ST 2059: clockClass=7-13, timeSource=GNSS(0x20)
+ * Parse a PTPv1 (IEEE 1588-2002) packet header.
+ * Returns null if buf is too short or version byte is not 1.
+ * Note: PTPv1 header is 40 bytes (vs 34 for v2), and the sourceUuid is
+ * a 6-byte EUI-48 MAC address at offset 20 (not an 8-byte EUI-64).
  */
-function detectProfile(clockClass, timeSourceCode) {
+function parseHeaderV1(buf) {
+  if (buf.length < 40) return null;
+  const version = buf.readUInt8(0);
+  if (version !== 1) return null;
+
+  const messageType = buf.readUInt8(18);
+  const subdomain   = buf.toString('ascii', 2, 18).replace(/\0/g, '').trim();
+  const uuid        = buf.slice(20, 26);
+  // Build a pseudo EUI-64 clockIdentity from EUI-48 by inserting FF-FE
+  // (same convention as IEEE 802.1AB / EUI-64 from EUI-48)
+  const clockIdentity = [
+    uuid[0], uuid[1], uuid[2], 0xff, 0xfe, uuid[3], uuid[4], uuid[5],
+  ].map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('-');
+
+  const sequenceId = buf.readUInt16BE(28);
+  const domainNumber = 0; // PTPv1 uses subdomain strings, map to domain 0
+
+  return {
+    version: 1,
+    messageType,
+    domainNumber,
+    subdomain,
+    clockIdentity,
+    sequenceId,
+    messageName: { 1: 'Sync', 2: 'Delay_Req', 8: 'Follow_Up', 9: 'Delay_Resp' }[messageType] || `v1:0x${messageType.toString(16)}`,
+    ptpTimescale: false,
+    timeTraceable: false,
+    freqTraceable: false,
+    twoStep: false,
+    unicast: false,
+  };
+}
+
+/**
+ * Parse a PTPv1 Sync message body (starts at offset 40).
+ * The Sync message in v1 carries GM information directly (no Announce message type).
+ */
+function parseV1SyncBody(buf, header) {
+  if (buf.length < 92) return null;
+
+  const gmUuid = buf.slice(53, 59);
+  // Reconstruct EUI-64 for grandmaster from its EUI-48 MAC
+  const grandmasterIdentity = [
+    gmUuid[0], gmUuid[1], gmUuid[2], 0xff, 0xfe, gmUuid[3], gmUuid[4], gmUuid[5],
+  ].map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('-');
+
+  const grandmasterClockStratum = buf.readUInt8(71);
+  const grandmasterPreferred    = buf.readUInt8(78) === 1;
+  const grandmasterIsBoundaryClock = buf.readUInt8(79) === 1;
+  const currentUtcOffset        = buf.readInt16BE(50);
+  const stepsRemoved            = buf.readUInt16BE(83);
+  const localStratum            = buf.readUInt8(85);
+
+  // PTPv1 stratum values: 1=atomic ref, 2=GPS, 3=radio, 4=OCXO, 5-7=crystal, 8=free-running
+  const stratumLabel = {
+    1: 'Atomic reference', 2: 'GPS/GNSS', 3: 'Terrestrial radio',
+    4: 'OCXO', 5: 'Crystal osc.', 6: 'Crystal osc.', 7: 'Crystal osc.',
+    8: 'Free-running',
+  }[grandmasterClockStratum] || `Stratum ${grandmasterClockStratum}`;
+
+  return {
+    ...header,
+    grandmasterIdentity,
+    grandmasterIsBoundaryClock,
+    grandmasterPreferred,
+    grandmasterClockStratum,
+    clockAccuracy: stratumLabel,
+    clockAccuracyCode: grandmasterClockStratum,
+    stepsRemoved,
+    localStratum,
+    currentUtcOffset,
+    // PTPv1 has no clockClass/priority1/priority2 — use stratum as proxy
+    grandmasterPriority1: null,
+    grandmasterPriority2: null,
+    clockClass: null,
+    timeSource: 'INTERNAL_OSCILLATOR', // default for Dante v1
+    timeSourceCode: 0xa0,
+  };
+}
+
+/**
+ * Deduce a PTP profile label from version, clock class and time source.
+ * References:
+ *   Dante (default):           PTPv1, stratum 8 (free-running crystal)
+ *   Dante+AES67 bridge:        PTPv1 (Dante domain) + PTPv2 (AES67 domain)
+ *   AES67-2018 §9.1:           clockClass=248, timeSource=INTERNAL_OSCILLATOR(0xa0)
+ *   RAVENNA:                   clockClass=135 (slave-only) or 248
+ *   SMPTE ST 2059:             clockClass=7-13, timeSource=GNSS(0x20)
+ */
+function detectProfile(version, clockClass, timeSourceCode) {
+  if (version === 1) return 'Dante (PTPv1)';
   if (timeSourceCode === 0x20 || timeSourceCode === 0x10) return 'SMPTE ST2059 (GNSS/Atomic)';
   if (clockClass === 248 && timeSourceCode === 0xa0) return 'AES67';
-  if (clockClass === 135) return 'Dante/RAVENNA (slave-only)';
+  if (clockClass === 135) return 'Dante/RAVENNA (AES67 mode)';
   if (clockClass >= 1 && clockClass <= 13) return 'Primary reference (GNSS)';
   if (clockClass === 248) return 'AES67/RAVENNA';
   return null;
@@ -276,9 +394,67 @@ function getOffsetStats(clockKey) {
   return { mean, stddev, min, max, samples: hist.length };
 }
 
+// ── PTPv1 packet handler ──────────────────────────────────────────────────────
+
+function handlePacketV1(buf, header, rinfo) {
+  const { clockIdentity, domainNumber, messageType } = header;
+
+  // PTPv1 Sync (type 1) carries full GM info — equivalent of v2 Announce
+  if (messageType !== 1) return; // only process Sync for now
+
+  const syncInfo = parseV1SyncBody(buf, header);
+  if (!syncInfo) return;
+
+  const clockKey = `${clockIdentity}@${domainNumber}`;
+  const clock = getOrCreate(clockIdentity, domainNumber);
+  clock.lastSeen = Date.now();
+  clock.announceCount++; // treat v1 Sync as announce equivalent
+
+  clock.grandmasterIdentity        = syncInfo.grandmasterIdentity;
+  clock.grandmasterPriority1       = null;
+  clock.grandmasterPriority2       = null;
+  clock.clockClass                 = null;
+  clock.clockAccuracy              = syncInfo.clockAccuracy;
+  clock.stepsRemoved               = syncInfo.stepsRemoved;
+  clock.timeSource                 = syncInfo.timeSource;
+  clock.timeSourceCode             = syncInfo.timeSourceCode;
+  clock.currentUtcOffset           = syncInfo.currentUtcOffset;
+  clock.grandmasterClockStratum    = syncInfo.grandmasterClockStratum;
+  clock.grandmasterPreferred       = syncInfo.grandmasterPreferred;
+  clock.grandmasterIsBoundaryClock = syncInfo.grandmasterIsBoundaryClock;
+  clock.ptpVersion                 = 1;
+  clock.ptpTimescale               = false;
+  clock.timeTraceable              = false;
+  clock.freqTraceable              = false;
+  clock.ptpProfile                 = 'Dante (PTPv1)';
+
+  clock.isGrandmaster = (clockIdentity === syncInfo.grandmasterIdentity);
+
+  // Mark other clocks in this domain that are no longer grandmaster
+  for (const [key, c] of clocks) {
+    if (c.domainNumber === domainNumber && key !== clockKey) {
+      if (c.isGrandmaster && clock.isGrandmaster) c.isGrandmaster = false;
+    }
+  }
+
+  // PTPv1 BC flag is explicit — override heuristic
+  if (syncInfo.grandmasterIsBoundaryClock) {
+    clock.clockRole = 'boundary';
+  }
+
+  emitUpdate();
+}
+
 // ── Main packet handler ───────────────────────────────────────────────────────
 
 function handlePacket(buf, rinfo) {
+  // Try PTPv1 first (Dante default) — v1 byte 0 = 0x01, v2 byte 1 low nibble = 0x02
+  const v1header = parseHeaderV1(buf);
+  if (v1header) {
+    handlePacketV1(buf, v1header, rinfo);
+    return;
+  }
+
   const header = parseHeader(buf);
   if (!header) return;
 
@@ -310,7 +486,7 @@ function handlePacket(buf, rinfo) {
       clock.ptpTimescale           = announce.ptpTimescale;
       clock.timeTraceable          = announce.timeTraceable;
       clock.freqTraceable          = announce.freqTraceable;
-      clock.ptpProfile             = detectProfile(announce.clockClass, announce.timeSourceCode);
+      clock.ptpProfile             = detectProfile(announce.version, announce.clockClass, announce.timeSourceCode);
 
       // A clock is grandmaster if its clockIdentity == grandmasterIdentity
       clock.isGrandmaster = (clockIdentity === announce.grandmasterIdentity);
@@ -330,7 +506,7 @@ function handlePacket(buf, rinfo) {
 
     case MSG_SYNC: {
       clock.syncCount++;
-      clock.logSyncInterval = header.logMessageInterval;
+      clock.logSyncInterval = header.logMessageInterval ?? clock.logSyncInterval;
 
       if (!header.twoStep) {
         // One-step: timestamp is in the sync packet itself
@@ -403,14 +579,15 @@ function emitUpdate() {
       }
       // Infer clockRole:
       //   grandmaster: clockIdentity === grandmasterIdentity
-      //   boundary:    stepsRemoved > 0 AND this clock also emits Sync (syncCount > 0)
-      //                i.e. it is both a slave (has a master) and a master (sends Sync)
+      //   boundary:    explicit flag (PTPv1) OR stepsRemoved > 0 AND syncCount > 0 (PTPv2 heuristic)
       //   slave:       stepsRemoved > 0 AND syncCount == 0
       let clockRole;
       if (clock.isGrandmaster) {
         clockRole = 'grandmaster';
+      } else if (clock.clockRole === 'boundary' || clock.grandmasterIsBoundaryClock) {
+        clockRole = 'boundary'; // explicit from PTPv1 grandmasterIsBoundaryClock flag
       } else if ((clock.stepsRemoved ?? 0) > 0 && clock.syncCount > 0) {
-        clockRole = 'boundary';
+        clockRole = 'boundary'; // PTPv2 heuristic
       } else {
         clockRole = 'slave';
       }
@@ -430,9 +607,11 @@ function emitUpdate() {
         grandmasterDisplayId: clock.grandmasterIdentity ? formatClockId(clock.grandmasterIdentity) : null,
         priority1:            clock.grandmasterPriority1 ?? null,
         priority2:            clock.grandmasterPriority2 ?? null,
-        clockClass:           clock.clockClass ?? null,
-        clockAccuracy:        clock.clockAccuracy || null,
-        timeSource:           clock.timeSource || null,
+        clockClass:              clock.clockClass ?? null,
+        clockAccuracy:           clock.clockAccuracy || null,
+        grandmasterClockStratum: clock.grandmasterClockStratum ?? null,
+        grandmasterIsBoundaryClock: clock.grandmasterIsBoundaryClock ?? null,
+        timeSource:              clock.timeSource || null,
         stepsRemoved:         clock.stepsRemoved ?? null,
         currentUtcOffset:     clock.currentUtcOffset ?? null,
         logSyncInterval:      clock.logSyncInterval ?? null,
