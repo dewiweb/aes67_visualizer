@@ -79,6 +79,9 @@ function handleSapMessage(message, rinfo) {
     }
   }
 
+  // Store version-agnostic origin fields for cross-source dedup (SAP vs RTSP ANNOUNCE)
+  parsedSap._originUsername  = sdp.origin?.username  || null;
+  parsedSap._originSessionId = String(sdp.origin?.sessionId ?? '');
   sessions[id] = parsedSap;
 
   if (isNew) {
@@ -158,21 +161,38 @@ function addRavennaStream(rawSdp, sourceIp) {
     return;
   }
 
-  // Secondary dedup: same stream announced via SAP already present (different sessionVersion).
-  // A Dante+AES67 device sends both SAP multicast and responds to RTSP DESCRIBE — the origin
-  // sessionVersion may differ between the two, producing a different MD5. Deduplicate by
-  // matching the multicast address + port from the parsed SDP.
-  const parsed = parseSdp({ ...sdp, raw: rawSdp, id, lastSeen: Date.now(), manual: false, sourceType: 'sap', sapSourceIp: sourceIp || null });
-  if (parsed.mcast && parsed.port) {
-    const existing = Object.values(sessions).find(
-      s => !s.manual && s.mcast === parsed.mcast && s.port === parsed.port
-    );
-    if (existing) {
-      console.log(`[SDP] RTSP duplicate suppressed — already have ${existing.name} on ${parsed.mcast}:${parsed.port} (via SAP)`);
-      existing.lastSeen = Date.now();
-      return;
-    }
+  // Secondary dedup — three strategies, any match suppresses the new entry:
+  //  1. Same multicast address + port (SAP vs RTSP DESCRIBE/ANNOUNCE, same stream different source)
+  //  2. Same o= username + sessionId (version-agnostic) — handles repeated ANNOUNCE with
+  //     incremented sessionVersion which produces a different MD5 origin hash
+  const parsed = parseSdp({ ...sdp, raw: rawSdp, id, lastSeen: Date.now(), manual: false, sourceType: 'rtsp', sapSourceIp: sourceIp || null });
+
+  const oUsername  = sdp.origin?.username  || null;
+  const oSessionId = sdp.origin?.sessionId || null;
+
+  const existing = Object.values(sessions).find(s => {
+    if (s.manual) return false;
+    // Strategy 1: same multicast + port
+    if (parsed.mcast && parsed.port && s.mcast === parsed.mcast && s.port === parsed.port) return true;
+    // Strategy 2: same origin username + sessionId (version-agnostic)
+    if (oUsername && oSessionId &&
+        s._originUsername  === oUsername &&
+        s._originSessionId === String(oSessionId)) return true;
+    return false;
+  });
+
+  if (existing) {
+    console.log(`[SDP] RTSP duplicate suppressed — already have ${existing.name} on ${existing.mcast}:${existing.port}`);
+    existing.lastSeen = Date.now();
+    // Update SAP source IP if we now know it better
+    if (sourceIp && !existing.sapSourceIp) existing.sapSourceIp = sourceIp;
+    sendUpdate();
+    return;
   }
+
+  // Store version-agnostic origin fields for future dedup
+  parsed._originUsername  = oUsername;
+  parsed._originSessionId = String(oSessionId);
 
   sessions[id] = parsed;
   console.log(`[SDP] RAVENNA stream via RTSP: ${parsed.name} (${parsed.mcast}:${parsed.port})`);
