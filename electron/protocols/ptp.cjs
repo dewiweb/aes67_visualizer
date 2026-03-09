@@ -717,8 +717,13 @@ function bindSocket(port, onPacket, onError) {
 
   sock.on('message', (buf, rinfo) => onPacket(buf, rinfo));
 
+  // PTP uses well-known privileged ports 319/320.
+  // On Linux, binding on 0.0.0.0 works for multicast reception when combined
+  // with addMembership — unlike RTP where the mcast address is needed.
+  // Binding on MCAST_PRIMARY directly causes EADDRNOTAVAIL on some Linux kernels.
   sock.bind({ port, address: '0.0.0.0', exclusive: false }, () => {
     try {
+      sock.setMulticastInterface(currentInterface);
       sock.addMembership(MCAST_PRIMARY, currentInterface);
       console.log(`[PTP] Listening on port ${port} (${MCAST_PRIMARY}, iface=${currentInterface})`);
     } catch (e) {
