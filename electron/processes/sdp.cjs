@@ -60,9 +60,26 @@ function handleSapMessage(message, rinfo) {
   sdp.lastSeen = Date.now();
   sdp.manual = false;
   sdp.sourceType = 'sap';
-  sdp.sapSourceIp = rinfo?.address || null; // IP that sent the SAP packet
+  sdp.sapSourceIp = rinfo?.address || null;
 
-  sessions[id] = parseSdp(sdp);
+  const parsedSap = parseSdp(sdp);
+
+  // Secondary dedup: if an RTSP-sourced stream with same mcast+port already exists
+  // (arrived before this SAP), merge instead of creating a duplicate entry.
+  if (isNew && parsedSap.mcast && parsedSap.port) {
+    const existing = Object.values(sessions).find(
+      s => !s.manual && s.mcast === parsedSap.mcast && s.port === parsedSap.port
+    );
+    if (existing) {
+      existing.lastSeen = Date.now();
+      existing.sapSourceIp = parsedSap.sapSourceIp || existing.sapSourceIp;
+      console.log(`[SDP] SAP duplicate suppressed — already have ${existing.name} on ${parsedSap.mcast}:${parsedSap.port} (via RTSP)`);
+      sendUpdate();
+      return;
+    }
+  }
+
+  sessions[id] = parsedSap;
 
   if (isNew) {
     const s = sessions[id];
@@ -135,22 +152,30 @@ function addRavennaStream(rawSdp, sourceIp) {
     .update(JSON.stringify(sdp.origin))
     .digest('hex');
 
-  // Don't overwrite existing SAP-announced stream
+  // Primary dedup: exact origin match
   if (sessions[id]) {
     sessions[id].lastSeen = Date.now();
     return;
   }
 
-  sdp.raw = rawSdp;
-  sdp.id = id;
-  sdp.lastSeen = Date.now();
-  sdp.manual = false;
-  sdp.sourceType = 'sap';
-  sdp.sapSourceIp = sourceIp || null;
+  // Secondary dedup: same stream announced via SAP already present (different sessionVersion).
+  // A Dante+AES67 device sends both SAP multicast and responds to RTSP DESCRIBE — the origin
+  // sessionVersion may differ between the two, producing a different MD5. Deduplicate by
+  // matching the multicast address + port from the parsed SDP.
+  const parsed = parseSdp({ ...sdp, raw: rawSdp, id, lastSeen: Date.now(), manual: false, sourceType: 'sap', sapSourceIp: sourceIp || null });
+  if (parsed.mcast && parsed.port) {
+    const existing = Object.values(sessions).find(
+      s => !s.manual && s.mcast === parsed.mcast && s.port === parsed.port
+    );
+    if (existing) {
+      console.log(`[SDP] RTSP duplicate suppressed — already have ${existing.name} on ${parsed.mcast}:${parsed.port} (via SAP)`);
+      existing.lastSeen = Date.now();
+      return;
+    }
+  }
 
-  sessions[id] = parseSdp(sdp);
-  const s = sessions[id];
-  console.log(`[SDP] RAVENNA stream via RTSP: ${s.name} (${s.mcast}:${s.port})`);
+  sessions[id] = parsed;
+  console.log(`[SDP] RAVENNA stream via RTSP: ${parsed.name} (${parsed.mcast}:${parsed.port})`);
   sendUpdate();
 }
 
