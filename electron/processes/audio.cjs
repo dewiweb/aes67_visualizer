@@ -30,14 +30,25 @@ function initAudify() {
 
 function getAudioApi() {
   if (!RtAudioApi) return 0;
-  
+
   switch (process.platform) {
     case 'darwin':
       return RtAudioApi.MACOSX_CORE;
     case 'win32':
       return RtAudioApi.WINDOWS_WASAPI;
-    case 'linux':
+    case 'linux': {
+      // PipeWire exposes a PulseAudio API — prefer it over raw ALSA
+      // which conflicts with PipeWire/PulseAudio and causes glitches.
+      // Fall back to ALSA only if PULSE is not available.
+      if (RtAudioApi.LINUX_PULSE !== undefined) {
+        try {
+          const test = new RtAudio(RtAudioApi.LINUX_PULSE);
+          const devs = test.getDevices();
+          if (devs && devs.length > 0) return RtAudioApi.LINUX_PULSE;
+        } catch (_) {}
+      }
       return RtAudioApi.LINUX_ALSA;
+    }
     default:
       return RtAudioApi.UNSPECIFIED;
   }
@@ -93,97 +104,89 @@ function start(args) {
   });
 
   // Audio parameters
-  const bufferSize = 1024;
+  const RING_SIZE    = 64;  // ring buffer slots (power of 2)
   const samplesPerPacket = Math.round((args.sampleRate / 1000) * args.ptime);
-  const bytesPerSample = args.codec === 'L24' ? 3 : 2;
-  const pcmDataSize = samplesPerPacket * bytesPerSample * args.channels;
-  const pcmL16out = Buffer.alloc(samplesPerPacket * 4 * bufferSize);
+  const bytesPerSample   = args.codec === 'L24' ? 3 : 2;
+  const pcmDataSize      = samplesPerPacket * bytesPerSample * args.channels;
+  const frameBytes       = samplesPerPacket * 4; // always stereo S16LE out
 
-  let jitterBufferSize = args.bufferEnabled ? args.bufferSize : 0;
+  // Jitter buffer: small ring of PCM frames + a filled-flag per slot
+  // Slots are keyed by seqNum % RING_SIZE — avoids the stale-read repeat bug.
+  const ring      = Buffer.alloc(frameBytes * RING_SIZE); // zeroed = silence
+  const ringFill  = new Uint8Array(RING_SIZE);            // 0=empty, 1=filled
+
+  let jitterBufferSize = args.bufferEnabled ? Math.max(2, args.bufferSize) : 2;
+  jitterBufferSize = Math.min(jitterBufferSize, RING_SIZE >> 1);
+
+  // Minimum samples per RtAudio write (RtAudio requirement)
   let outSampleFactor = 1;
-  let seqInternal = -1;
+  while (samplesPerPacket * outSampleFactor < 48) outSampleFactor++;
+  outSampleFactor = Math.min(outSampleFactor, 4); // cap at 4×
 
-  // Ensure minimum 48 samples per write
-  while (samplesPerPacket * outSampleFactor < 48) {
-    outSampleFactor++;
-  }
-
-  if (outSampleFactor > 1 && outSampleFactor > jitterBufferSize) {
-    jitterBufferSize = outSampleFactor;
-  }
+  let nextSeq = -1; // next expected sequence number (-1 = not started)
 
   client.on('message', (buffer, remote) => {
     // Parse RTP header
-    const firstByte = buffer.readUInt8(0);
-    const csrcCount = firstByte & 0x0f;
-    let headerLength = 12 + csrcCount * 4;
+    const firstByte  = buffer.readUInt8(0);
+    const csrcCount  = firstByte & 0x0f;
+    let   headerLength = 12 + csrcCount * 4;
     const extensionFlag = (firstByte >> 4) & 0x01;
 
-    // Handle RTP extension header
     if (extensionFlag) {
-      const extIndex = 12 + csrcCount * 4;
+      const extIndex       = 12 + csrcCount * 4;
       const extensionLength = buffer.readUInt16BE(extIndex + 2);
       headerLength += 4 + extensionLength * 4;
     }
 
-    // Validate packet size
-    if (buffer.length !== pcmDataSize + headerLength) {
-      return;
-    }
+    if (buffer.length !== pcmDataSize + headerLength) return;
+    if (args.filter && remote.address !== args.filterAddr) return;
 
-    // Source filter (if specified)
-    if (args.filter && remote.address !== args.filterAddr) {
-      return;
-    }
+    const seqNum  = buffer.readUInt16BE(2);
+    const slot    = seqNum & (RING_SIZE - 1); // fast modulo (power of 2)
+    const slotOff = slot * frameBytes;
 
-    const seqNum = buffer.readUInt16BE(2);
-    const bufferIndex = (seqNum % bufferSize) * samplesPerPacket * 4;
-
-    // Convert to 16-bit stereo output
-    for (let sample = 0; sample < samplesPerPacket; sample++) {
-      // Left channel
-      pcmL16out.writeUInt16LE(
-        buffer.readUInt16BE(
-          (sample * args.channels + args.ch1Map) * bytesPerSample + headerLength
-        ),
-        sample * 4 + bufferIndex
+    // Decode into ring slot
+    for (let s = 0; s < samplesPerPacket; s++) {
+      ring.writeUInt16LE(
+        buffer.readUInt16BE((s * args.channels + args.ch1Map) * bytesPerSample + headerLength),
+        slotOff + s * 4
       );
-      // Right channel
-      pcmL16out.writeUInt16LE(
-        buffer.readUInt16BE(
-          (sample * args.channels + args.ch2Map) * bytesPerSample + headerLength
-        ),
-        sample * 4 + bufferIndex + 2
+      ring.writeUInt16LE(
+        buffer.readUInt16BE((s * args.channels + args.ch2Map) * bytesPerSample + headerLength),
+        slotOff + s * 4 + 2
       );
     }
+    ringFill[slot] = 1;
 
-    if (seqInternal !== -1) {
-      if (outSampleFactor === 1 || seqInternal % outSampleFactor === 0) {
-        const outBufIndex = seqInternal * samplesPerPacket * 4;
-        const outBuf = pcmL16out.subarray(
-          outBufIndex,
-          outBufIndex + samplesPerPacket * 4 * outSampleFactor
-        );
-        try {
-          rtAudio.write(outBuf);
-        } catch (e) {
-          // Buffer overflow, ignore
-        }
-      }
-      seqInternal = (seqInternal + 1) % bufferSize;
-    } else {
-      // Initialize sequence
-      seqInternal = (seqNum - jitterBufferSize + bufferSize) % bufferSize;
-      
-      // Fill jitter buffer with silence
+    if (nextSeq === -1) {
+      // First packet: prime the jitter buffer with silence then start
+      nextSeq = (seqNum - jitterBufferSize + 65536) & 0xFFFF;
+      const silence = Buffer.alloc(frameBytes);
       for (let j = 0; j < jitterBufferSize; j++) {
-        try {
-          rtAudio.write(Buffer.alloc(samplesPerPacket * 4 * outSampleFactor));
-        } catch (e) {
-          // Ignore
-        }
+        try { rtAudio.write(silence); } catch (_) {}
       }
     }
+
+    // Drain slots up to (but not including) current seqNum
+    let drained = 0;
+    while (nextSeq !== seqNum && drained < RING_SIZE) {
+      const ns  = nextSeq & (RING_SIZE - 1);
+      const off = ns * frameBytes;
+      // Write slot data if filled, else silence (missing packet concealment)
+      try {
+        rtAudio.write(ringFill[ns] ? ring.subarray(off, off + frameBytes) : Buffer.alloc(frameBytes));
+      } catch (_) {}
+      ringFill[ns] = 0;
+      nextSeq = (nextSeq + 1) & 0xFFFF;
+      drained++;
+    }
+
+    // Output the current packet
+    try {
+      rtAudio.write(ring.subarray(slotOff, slotOff + frameBytes));
+    } catch (_) {}
+    ringFill[slot] = 0;
+    nextSeq = (seqNum + 1) & 0xFFFF;
   });
 
   // Initialize RtAudio
@@ -217,12 +220,14 @@ function start(args) {
   }
 
   try {
+    const streamFrames = samplesPerPacket * outSampleFactor;
+    console.log(`[Audio] API=${getAudioApi()} device=${deviceId} frames=${streamFrames} sr=${args.sampleRate} jitter=${jitterBufferSize}`);
     rtAudio.openStream(
       { deviceId, nChannels: 2, firstChannel: 0 },
       null,
       RtAudioFormat.RTAUDIO_SINT16,
       args.sampleRate,
-      samplesPerPacket * outSampleFactor,
+      streamFrames,
       'AES67 Pro Monitor'
     );
     rtAudio.start();
