@@ -40,26 +40,60 @@ const Row: React.FC<{ label: string; value: React.ReactNode; highlight?: boolean
 );
 
 /**
- * Extract the MAC from an EUI-64 clock identity.
- * XX-XX-XX-FF-FE-XX-XX-XX → XX:XX:XX:XX:XX:XX
+ * Normalise a raw hex string (with or without separators) to XX:XX:XX:XX:XX:XX uppercase.
+ * Handles both EUI-48 (6 bytes = 12 hex chars) and strips FF:FE from EUI-64 (8 bytes = 16 hex chars).
+ * Returns null if the input is unrecognisable.
+ */
+function normaliseToEui48(raw: string): string | null {
+  // Strip all non-hex characters
+  const hex = raw.replace(/[^0-9a-fA-F]/g, '').toUpperCase();
+  if (hex.length === 12) {
+    // EUI-48: 6 bytes
+    return hex.match(/.{2}/g)!.join(':');
+  }
+  if (hex.length === 16) {
+    // EUI-64: remove bytes 4-5 (FF FE at positions 6-9 in 0-indexed hex string)
+    // xx xx xx [FF FE] xx xx xx -> bytes 0-2 + 5-7
+    const b = hex.match(/.{2}/g)!;
+    if (b[3] === 'FF' && b[4] === 'FE') {
+      return [b[0], b[1], b[2], b[5], b[6], b[7]].join(':');
+    }
+    // Non-standard EUI-64 (e.g. Dante PTPv1 synthetic): just take first 6 bytes as fallback
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Extract the EUI-48 MAC from a PTP clock identity (EUI-64 string XX-XX-XX-XX-XX-XX-XX-XX).
+ * Standard EUI-64: XX-XX-XX-FF-FE-XX-XX-XX -> XX:XX:XX:XX:XX:XX
+ * Non-standard (e.g. Dante PTPv1 01:01:00:...): returns null (no MAC to match)
  */
 function clockIdentityToMac(id: string): string | null {
   const parts = id.split('-');
   if (parts.length !== 8) return null;
-  if (parts[3].toUpperCase() !== 'FF' || parts[4].toUpperCase() !== 'FE') return null;
-  return [parts[0], parts[1], parts[2], parts[5], parts[6], parts[7]]
-    .join(':').toUpperCase();
+  // Standard EUI-64 with FF-FE marker
+  if (parts[3].toUpperCase() === 'FF' && parts[4].toUpperCase() === 'FE') {
+    return [parts[0], parts[1], parts[2], parts[5], parts[6], parts[7]].join(':').toUpperCase();
+  }
+  // Also try: some devices build EUI-64 without FF-FE (just pad with 00-00)
+  // In that case try matching all 6 significant bytes directly
+  return null;
 }
 
 /**
- * Build a map: normalised MAC → device name
+ * Build a map: normalised EUI-48 MAC -> device name.
+ * Handles macAddress stored as:
+ *   - 16-char EUI-64 hex string (Dante mDNS TXT 'id'): "001dc1fffe506217"
+ *   - 12-char EUI-48 hex string: "001dc1506217"
+ *   - Colon-separated: "00:1d:c1:50:62:17"
  */
 function buildMacMap(devices: DanteDevice[]): Map<string, string> {
   const m = new Map<string, string>();
   for (const d of devices) {
     if (d.macAddress) {
-      const mac = d.macAddress.toUpperCase().replace(/[^0-9A-F]/g, ':').replace(/[^0-9A-F:]/g, '');
-      m.set(mac, d.name || d.ip);
+      const mac = normaliseToEui48(d.macAddress);
+      if (mac) m.set(mac, d.name || d.ip);
     }
   }
   return m;

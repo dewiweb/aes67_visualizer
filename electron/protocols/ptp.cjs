@@ -183,6 +183,12 @@ function parseHeaderV1(buf) {
   const version = buf.readUInt8(0);
   if (version !== 1) return null;
 
+  // PTPv1: byte 1 = versionNetwork = 0x01
+  // PTPv2: byte 1 = reserved(4)|versionPTP(4) = 0x02
+  // A PTPv2 Delay_Req has byte 0 = 0x01 (messageType=1) → must reject via this check
+  const versionNetwork = buf.readUInt8(1);
+  if (versionNetwork !== 1) return null;
+
   const messageType = buf.readUInt8(18);
   const subdomain   = buf.toString('ascii', 2, 18).replace(/\0/g, '').trim();
   const uuid        = buf.slice(20, 26);
