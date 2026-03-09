@@ -24,10 +24,12 @@ import {
   PortConflictData,
 } from './types';
 import Header from './components/Header';
-import Sidebar from './components/Sidebar';
-import MonitoringWall from './components/MonitoringWall';
+import NavRail from './components/NavRail';
+import MainPanel from './components/MainPanel';
 import StreamCard from './components/StreamCard';
 import SettingsPanel from './components/SettingsPanel';
+
+export type ViewId = 'monitoring' | 'devices' | 'ptp' | 'sdp';
 
 const App: React.FC = () => {
   // Language
@@ -72,6 +74,7 @@ const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [activeDragStream, setActiveDragStream] = useState<Stream | null>(null);
   const [portConflict, setPortConflict] = useState<PortConflictData | null>(null);
+  const [activeView, setActiveView] = useState<ViewId>('monitoring');
 
   // DnD sensors
   const sensors = useSensors(
@@ -411,25 +414,31 @@ const App: React.FC = () => {
         )}
 
         <div className="flex-1 flex overflow-hidden">
-          <Sidebar
+          <NavRail
+            activeView={activeView}
+            onViewChange={setActiveView}
+            streamCount={filteredStreams.filter(s => s.sourceType === 'sap').length}
+            deviceCount={new Set([
+              ...danteDevices.map(d => d.ip).filter(Boolean),
+              ...streams.map(s => s.deviceIp || s.sapSourceIp).filter(Boolean) as string[],
+            ]).size}
+            ptpCount={ptpClocks.length}
+            manualCount={filteredStreams.filter(s => s.sourceType === 'manual').length}
+          />
+          <MainPanel
+            activeView={activeView}
             t={t}
             streams={filteredStreams}
             streamLevels={streamLevels}
             streamPtpStatuses={streamPtpStatuses}
             danteDevices={danteDevices}
             ptpClocks={ptpClocks}
+            slots={slots}
             playingStreamId={playingStreamId}
             onAddManualStream={handleAddManualStream}
             onRemoveStream={handleRemoveStream}
             onPlayStream={handlePlayStream}
             onExportJson={handleExportJson}
-          />
-
-          <MonitoringWall
-            t={t}
-            slots={slots}
-            streamLevels={streamLevels}
-            streamPtpStatuses={streamPtpStatuses}
             onRemoveFromSlot={handleRemoveFromSlot}
           />
         </div>

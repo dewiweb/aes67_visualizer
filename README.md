@@ -7,7 +7,7 @@ A cross-platform AES67 / ST2110-30 / RAVENNA / Dante audio stream visualization 
 - **SAP/mDNS Discovery**: Automatic detection of AES67, RAVENNA and Dante streams
 - **Dante ARC**: Query Dante devices directly (name, model, TX/RX channels, channel names)
 - **Device Panel**: Per-device view with expandable TX/RX channel list
-- **Monitoring Wall**: Drag-and-drop streams to 8-slot monitoring wall
+- **Monitoring Wall**: Drag-and-drop streams to 16-slot monitoring wall
 - **Real-time Meters**: dBFS level meters with peak hold
 - **Audio Playback**: Listen to any stream with channel selection
 - **PTP Monitoring**: Track IEEE 1588 grandmaster and lock status per stream
@@ -47,14 +47,14 @@ electron/
 └── protocols/
     ├── arc.cjs              # Dante ARC binary UDP protocol (port 4440)
     ├── rtsp.cjs             # RAVENNA RTSP stream discovery (RFC 2326)
-    ├── mdns.cjs             # mDNS/DNS-SD via dns-sd.exe (Windows)
+    ├── mdns.cjs              # mDNS/DNS-SD — dns-sd (Windows/macOS) or avahi-browse (Linux)
     ├── sap.cjs              # SAP RFC 2974 multicast socket
     ├── aes67.cjs            # AES67 SDP validation & PTP parsing
     └── ravenna.cjs          # RAVENNA device helpers & RTSP path builder
 src/
 ├── components/
 │   ├── DevicePanel.tsx      # Per-device view with ARC channel names
-│   ├── MonitoringWall.tsx   # 8-slot monitoring wall
+│   ├── MonitoringWall.tsx   # 16-slot monitoring wall
 │   └── ...
 └── types/index.ts           # TypeScript definitions incl. DanteDevice
 ```
@@ -156,15 +156,18 @@ start_code(2=0x27FF) + total_length(2) + seqnum(2) + opcode(2) + result_code(2) 
 
 ### Open Source Projects Studied
 
-| Project | Language | What it provided |
-|---------|----------|-----------------|
-| [philhartung/aes67-monitor](https://github.com/philhartung/aes67-monitor) | JS/Electron | SAP socket (`socket.bind(9875)`), SAP announcement (`announceStream` → `239.255.255.255:9875`), SAP session ID from `o=` line (MD5 hash), stream timeout 5min, `sdp-transform` library, RTP playback via `audify`/RtAudio, jitter buffer, multicast bind `client.bind(5004)` |
-| [Digisynthetic/aes67-stream-monitor](https://github.com/Digisynthetic/aes67-stream-monitor) | JS/Electron | SAP `SapDiscovery` class (EventEmitter), stream timeout 120s, level polling via UDP `getVolumeDbBatchIn` JSON on port 8999, RMS level calculation over L24 samples, Monitoring Wall UI, i18n |
-| [chris-ritsen/network-audio-controller](https://github.com/chris-ritsen/network-audio-controller) | Python | Dante ARC protocol opcodes, packet format, const.py |
-| [teodly/inferno](https://github.com/teodly/inferno) (mirror of [lumifaza/inferno](https://gitlab.com/lumifaza/inferno)) | Rust | ARC packet header layout, pagination (`0x8112`), flows control port 4455, mDNS service types `_netaudio-chan`, `_netaudio-bund` |
-| [soundondigital/ravennakit](https://github.com/soundondigital/ravennakit) | C++ | RAVENNA RTSP paths (`/by-name/`, `/by-id/`), RTP port 5004, PTPv2 profiles, DNS-SD service types |
-| [martim01/pam](https://github.com/martim01/pam) | C++ | AES67/RAVENNA/ST2110 monitor — confirms RTP port 5004, RTSP port 554 for mDNS, PTP domain from `a=ts-refclk`/`a=clock-domain` SDP attributes, PTP hybrid mode (multicast+unicast), AM824 codec (AES3/ST2110-31), Livewire (Axia) discovery alongside SAP |
-| [bondagit/aes67-linux-daemon](https://github.com/bondagit/aes67-linux-daemon) | C++ | AES67 reference implementation |
+All projects below were used as **protocol and architecture references only** — no source code was copied.
+This project remains under MIT License and is fully compatible with all referenced works.
+
+| Project | Licence | Language | What it provided |
+|---------|---------|----------|------------------|
+| [philhartung/aes67-monitor](https://github.com/philhartung/aes67-monitor) | **MIT** | JS/Electron | SAP socket (`socket.bind(9875)`), SAP announcement (`announceStream` → `239.255.255.255:9875`), SAP session ID from `o=` line (MD5 hash), stream timeout 5min, `sdp-transform` library, RTP playback via `audify`/RtAudio, jitter buffer, multicast bind `client.bind(5004)` |
+| [Digisynthetic/aes67-stream-monitor](https://github.com/Digisynthetic/aes67-stream-monitor) | **Proprietary** | JS/Electron | Architecture reference only: SAP `SapDiscovery` class, Monitoring Wall UI concept, i18n approach |
+| [chris-ritsen/network-audio-controller](https://github.com/chris-ritsen/network-audio-controller) | **MIT** | Python | Dante ARC protocol opcodes, packet format, const.py |
+| [teodly/inferno](https://github.com/teodly/inferno) (mirror of [lumifaza/inferno](https://gitlab.com/lumifaza/inferno)) | **GPL-3.0** | Rust | ARC packet header layout, pagination (`0x8112`), flows control port 4455, mDNS service types `_netaudio-chan`, `_netaudio-bund` — **protocol reference only, no code included** |
+| [soundondigital/ravennakit](https://github.com/soundondigital/ravennakit) | **AGPLv3** | C++ | RAVENNA RTSP paths (`/by-name/`, `/by-id/`), RTP port 5004, PTPv2 profiles, DNS-SD service types — **protocol/spec reference only, no code included** |
+| [martim01/pam](https://github.com/martim01/pam) | **MIT** | C++ | AES67/RAVENNA/ST2110 monitor — confirms RTP port 5004, RTSP port 554, PTP domain from `a=ts-refclk`/`a=clock-domain` SDP attributes, PTP hybrid mode, AM824 codec |
+| [bondagit/aes67-linux-daemon](https://github.com/bondagit/aes67-linux-daemon) | **LGPL-2.1** | C++ | AES67 Linux reference implementation — **protocol reference only, no code included** |
 
 ### Standards & Specifications
 

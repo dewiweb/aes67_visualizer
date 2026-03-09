@@ -75,7 +75,7 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onS
   }
 
   return (
-    <div className="space-y-2 p-2">
+    <div className="grid gap-2 p-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 auto-rows-min">
       {unified.map(({ ip, dante: dd, streams: devStreams, ptpGrandmaster, ptpVersion, ptpDomain }) => {
         const isExpanded   = expanded.has(ip);
         const hasChannels  = (dd?.txChannelNames?.length ?? 0) > 0 || (dd?.rxChannelNames?.length ?? 0) > 0;
