@@ -155,8 +155,11 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t, onStream
 
         return (
           <div key={ip} className={`bg-slate-800 rounded-lg overflow-hidden border ${borderColor}`}>
-            <button
+            <div
               onClick={() => isExpandable && toggle(ip)}
+              role={isExpandable ? 'button' : undefined}
+              tabIndex={isExpandable ? 0 : undefined}
+              onKeyDown={isExpandable ? (e) => (e.key === 'Enter' || e.key === ' ') && toggle(ip) : undefined}
               className={`w-full flex items-center gap-3 p-3 text-left ${
                 isExpandable ? 'hover:bg-slate-700/50 cursor-pointer' : 'cursor-default'
               } transition-colors`}
@@ -269,7 +272,7 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t, onStream
                   ? <ChevronDown size={14} className="text-slate-500 shrink-0" />
                   : <ChevronRight size={14} className="text-slate-500 shrink-0" />
               )}
-            </button>
+            </div>
 
             {/* Expanded content */}
             {isExpanded && (
