@@ -298,6 +298,10 @@ function initChildProcesses() {
     if (data.type === 'dante-devices') {
       danteDevices = data.devices;
       sendToRenderer('network-devices', danteDevices);
+      // Forward device list to PTP process for clock pre-population from mDNS MACs
+      if (ptpProcess) {
+        ptpProcess.send({ type: 'devices', devices: danteDevices });
+      }
     } else if (data.type === 'ravenna-sdp') {
       // RTSP DESCRIBE returned a SDP — inject into SDP process
       console.log(`[Main] RAVENNA SDP received from ${data.name}, forwarding to SDP process`);

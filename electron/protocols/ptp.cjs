@@ -482,7 +482,8 @@ function handlePacketV1(buf, header, rinfo) {
 
   } else if (messageType === 2) {
     // ── Delay_Req: sent by every slave clock — register it ───────────────────
-    // Delay_Req body has no GM info; inherit from the domain's known GM if available.
+    // NOTE: in practice Dante slaves send Delay_Req as unicast, not multicast.
+    // This branch is kept for completeness but may rarely fire.
     const clock = getOrCreate(clockIdentity, domainNumber);
     clock.lastSeen = Date.now();
     clock.syncCount++; // reuse syncCount as "activity counter" for slaves
@@ -800,6 +801,63 @@ function setInterface(address) {
 
 // ── IPC ───────────────────────────────────────────────────────────────────────
 
+/**
+ * Pre-populate the PTP clock registry from mDNS-discovered devices.
+ * Dante devices have a MAC address (EUI-64 hex, 16 chars) from mDNS TXT 'id' field.
+ * We build the clockIdentity from it and register the device as a PTPv1 slave
+ * if it hasn't been seen via multicast yet.
+ */
+function injectDevices(devices) {
+  let injected = 0;
+  for (const dev of devices) {
+    if (!dev.isDante) continue;           // only Dante devices use PTPv1
+    if (!dev.macAddress) continue;        // need MAC to build clockIdentity
+
+    // macAddress is 16-char hex EUI-64: e.g. '001dc1fffe506217'
+    // Format as XX-XX-XX-XX-XX-XX-XX-XX clockIdentity
+    const mac = dev.macAddress;
+    if (mac.length !== 16) continue;
+
+    const clockIdentity = [
+      mac.slice(0,2), mac.slice(2,4), mac.slice(4,6),
+      mac.slice(6,8), mac.slice(8,10), mac.slice(10,12),
+      mac.slice(12,14), mac.slice(14,16),
+    ].map(s => s.toUpperCase()).join('-');
+
+    const key = `${clockIdentity}@0`;
+    if (clocks.has(key)) {
+      // Already known via PTP packets — just update IP if missing
+      const existing = clocks.get(key);
+      if (!existing.senderIp && dev.ip) existing.senderIp = dev.ip;
+      continue;
+    }
+
+    // Register as PTPv1 slave (not yet seen via multicast)
+    clocks.set(key, {
+      clockIdentity,
+      domainNumber: 0,
+      isGrandmaster: false,
+      ptpVersion: 1,
+      ptpProfile: 'Dante (PTPv1)',
+      clockRole: 'slave',
+      ptpTimescale: false,
+      timeTraceable: false,
+      freqTraceable: false,
+      lastSeen: Date.now(),
+      announceCount: 0,
+      syncCount: 0,
+      senderIp: dev.ip || null,
+      grandmasterIdentity: null,
+      _fromMdns: true,  // mark as pre-populated, not yet confirmed by PTP packet
+    });
+    injected++;
+  }
+  if (injected > 0) {
+    console.log(`[PTP] Pre-populated ${injected} clocks from mDNS devices`);
+    emitUpdate();
+  }
+}
+
 process.on('message', (msg) => {
   switch (msg.type) {
     case 'start':
@@ -810,6 +868,9 @@ process.on('message', (msg) => {
       break;
     case 'set-interface':
       setInterface(msg.address);
+      break;
+    case 'devices':
+      injectDevices(msg.devices || []);
       break;
   }
 });
