@@ -304,7 +304,7 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t, onStream
                           s.name?.startsWith(chName + ' ')
                         );
                         return (
-                          <div key={ch.id} className="flex items-center gap-1.5 text-[10px]">
+                          <div key={`tx-${ch.id}`} className="flex items-center gap-1.5 text-[10px]">
                             <span className="text-slate-600 w-5 text-right shrink-0">{ch.id}</span>
                             <span className="text-slate-300 truncate flex-1">{chName}</span>
                             {sapStream ? (
@@ -352,7 +352,7 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t, onStream
                           })));
 
                         return (
-                          <div key={ch.id}>
+                          <div key={`rx-${ch.id}`}>
                             {/* Channel row */}
                             <div className="flex items-center gap-1 text-[10px] group">
                               <span className="text-slate-600 w-5 text-right shrink-0">{ch.id}</span>
