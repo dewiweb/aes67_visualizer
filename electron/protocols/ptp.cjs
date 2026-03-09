@@ -424,6 +424,13 @@ function bindSocket(port, onPacket, onError) {
         `  sudo setcap cap_net_bind_service=+eip /path/to/aes67-visualizer.AppImage\n` +
         `  or: sudo sysctl -w net.ipv4.ip_unprivileged_port_start=319`
       );
+      process.send({
+        type: 'port-conflict',
+        port,
+        code: 'EACCES',
+        message: `PTP port ${port} access denied. On Linux, run:\n  sudo setcap cap_net_bind_service=+eip /path/to/aes67-visualizer.AppImage\nor:\n  sudo sysctl -w net.ipv4.ip_unprivileged_port_start=319`,
+        source: 'ptp',
+      });
     } else {
       console.error(`[PTP] Socket error port ${port}:`, err.message);
     }

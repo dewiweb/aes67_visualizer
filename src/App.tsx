@@ -29,7 +29,7 @@ import MainPanel from './components/MainPanel';
 import StreamCard from './components/StreamCard';
 import SettingsPanel from './components/SettingsPanel';
 
-export type ViewId = 'monitoring' | 'devices' | 'ptp' | 'sdp';
+export type ViewId = 'monitoring' | 'devices' | 'ptp' | 'sdp' | 'permissions';
 
 const App: React.FC = () => {
   // Language
@@ -74,6 +74,7 @@ const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [activeDragStream, setActiveDragStream] = useState<Stream | null>(null);
   const [portConflict, setPortConflict] = useState<PortConflictData | null>(null);
+  const [portConflicts, setPortConflicts] = useState<PortConflictData[]>([]);
   const [activeView, setActiveView] = useState<ViewId>('monitoring');
 
   // DnD sensors
@@ -127,6 +128,10 @@ const App: React.FC = () => {
     // Subscribe to port conflicts
     const unsubPortConflict = window.api.onPortConflict((data) => {
       setPortConflict(data);
+      setPortConflicts(prev => {
+        const filtered = prev.filter(c => c.port !== data.port || c.source !== data.source);
+        return [...filtered, data];
+      });
     });
 
     // Subscribe to SDP status (clears conflict on success)
@@ -424,6 +429,7 @@ const App: React.FC = () => {
             ]).size}
             ptpCount={ptpClocks.length}
             manualCount={filteredStreams.filter(s => s.sourceType === 'manual').length}
+            conflictCount={portConflicts.length}
           />
           <MainPanel
             activeView={activeView}
@@ -435,6 +441,7 @@ const App: React.FC = () => {
             ptpClocks={ptpClocks}
             slots={slots}
             playingStreamId={playingStreamId}
+            portConflicts={portConflicts}
             onAddManualStream={handleAddManualStream}
             onRemoveStream={handleRemoveStream}
             onPlayStream={handlePlayStream}

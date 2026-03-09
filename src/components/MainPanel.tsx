@@ -3,12 +3,13 @@ import { Plus, Download } from 'lucide-react';
 import { ViewId } from '../App';
 import {
   Stream, StreamLevels, StreamPtpStatuses,
-  DanteDevice, PtpClock, MonitorSlot,
+  DanteDevice, PtpClock, MonitorSlot, PortConflictData,
 } from '../types';
 import StreamCard from './StreamCard';
 import MonitoringWall from './MonitoringWall';
 import DevicePanel from './DevicePanel';
 import PtpPanel from './PtpPanel';
+import PermissionsPanel from './PermissionsPanel';
 
 interface MainPanelProps {
   activeView: ViewId;
@@ -20,6 +21,7 @@ interface MainPanelProps {
   ptpClocks: PtpClock[];
   slots: MonitorSlot[];
   playingStreamId: string | null;
+  portConflicts: PortConflictData[];
   onAddManualStream: (sdp: string) => void;
   onRemoveStream: (streamId: string) => void;
   onPlayStream: (stream: Stream, ch1: number, ch2: number) => void;
@@ -37,6 +39,7 @@ const MainPanel: React.FC<MainPanelProps> = ({
   ptpClocks,
   slots,
   playingStreamId,
+  portConflicts,
   onAddManualStream,
   onRemoveStream,
   onPlayStream,
@@ -214,6 +217,23 @@ const MainPanel: React.FC<MainPanelProps> = ({
             <Plus size={16} />
             {t.addStream || 'Add Stream'}
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Permissions view ──────────────────────────────────────────────────────────
+  if (activeView === 'permissions') {
+    return (
+      <div className="flex-1 flex flex-col overflow-hidden bg-slate-900">
+        <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between shrink-0">
+          <h2 className="text-base font-semibold text-white">Permissions & Network Access</h2>
+          {portConflicts.length > 0 && (
+            <span className="text-xs text-red-400">{portConflicts.length} active issue{portConflicts.length > 1 ? 's' : ''}</span>
+          )}
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          <PermissionsPanel portConflicts={portConflicts} />
         </div>
       </div>
     );

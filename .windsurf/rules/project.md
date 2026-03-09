@@ -236,6 +236,77 @@ No source code was copied. This project remains under MIT License.
   - Uses **Avahi** (not dns-sd) for mDNS on Linux — confirms our `avahi-browse` approach
 - **License correction**: This repo is **GPL-3.0**, not LGPL-2.1 as noted before. Still protocol reference only.
 
+## OS Permissions Audit
+
+### Permission Matrix by Port
+
+| Port | Protocol | Usage | Windows | Linux | macOS |
+|------|----------|-------|---------|-------|-------|
+| 9875 UDP | SAP multicast | Stream discovery `239.255.255.255` | ✅ | ✅ (bind 0.0.0.0) | ✅ |
+| 5353 UDP | mDNS multicast | Device discovery `224.0.0.251` | ✅ (Bonjour) | ⚠️ (avahi-daemon) | ✅ (built-in) |
+| 319 UDP | PTPv2 event | PTP sync packets | ✅ | ❌ port <1024 | ✅ |
+| 320 UDP | PTPv2 general | PTP announce/follow-up | ✅ | ❌ port <1024 | ✅ |
+| 4440 UDP | ARC unicast | Dante device control | ✅ | ✅ | ✅ |
+| 5004+ UDP | RTP multicast | Audio metering | ✅ | ✅ (bind 0.0.0.0) | ✅ |
+| 554 TCP | RTSP | RAVENNA stream SDP | ✅ | ✅ | ✅ |
+
+### Linux — PTP Ports 319/320
+
+Ports below 1024 require elevated privilege on Linux. Three options:
+
+```bash
+# Option 1: kernel parameter (temporary)
+sudo sysctl -w net.ipv4.ip_unprivileged_port_start=319
+
+# Option 2: kernel parameter (persistent across reboots)
+echo "net.ipv4.ip_unprivileged_port_start=319" | sudo tee /etc/sysctl.d/99-ptp.conf
+sudo sysctl -p /etc/sysctl.d/99-ptp.conf
+
+# Option 3: setcap on extracted binary (AppImage cannot be setcap'd directly)
+./aes67-visualizer.AppImage --appimage-extract
+sudo setcap cap_net_bind_service=+eip squashfs-root/aes67-visualizer
+```
+
+### Linux — mDNS (Avahi)
+
+mDNS discovery requires `avahi-daemon` to be running. Our `mdns.cjs` uses `avahi-browse` as external process.
+```bash
+sudo apt install avahi-daemon avahi-utils   # Debian/Ubuntu/Mint
+sudo pacman -S avahi                         # Arch
+sudo dnf install avahi avahi-tools           # Fedora
+sudo systemctl enable --now avahi-daemon
+```
+
+### Linux — AppImage setcap note
+
+`setcap` cannot be applied to an AppImage directly (it's a compressed filesystem).
+Workaround: extract with `--appimage-extract`, apply `setcap` to the extracted ELF binary,
+or use the `ip_unprivileged_port_start` sysctl approach instead.
+
+### Windows
+
+No special permissions needed for any port. Requirements:
+- **Bonjour Service** must be installed for mDNS (comes with iTunes, or download standalone)
+- **Windows Firewall**: allow inbound UDP 9875, 5353, 319, 320, 5004 for the app
+
+### macOS
+
+- mDNS via built-in `mDNSResponder` — no setup needed
+- PTP ports 319/320: macOS allows non-root UDP bind below 1024 — no setup needed
+- Firewall: System Settings → Network → Firewall → allow inbound for AES67 Visualizer
+
+### Error Handling in Code
+
+| Module | Port | EACCES handled | Sent to UI |
+|--------|------|----------------|------------|
+| `ptp.cjs` | 319, 320 | ✅ | ✅ via `port-conflict` IPC |
+| `sdp.cjs` / `sap.cjs` | 9875 | ✅ | ✅ via `port-conflict` IPC |
+| `meters.cjs` | RTP ports | ✅ | ✅ via `port-conflict` IPC |
+| `mdns.cjs` | 5353 | N/A (uses avahi-browse subprocess) | N/A |
+| `arc.cjs` | 4440 | N/A (ephemeral source port) | N/A |
+
+UI: `PermissionsPanel` (NavRail: shield icon) displays active conflicts + per-OS fix instructions.
+
 ## Protocol Quick Reference
 
 ### Ports

@@ -197,11 +197,19 @@ function initChildProcesses() {
   // PTP Monitor Process
   ptpProcess = fork(path.join(__dirname, 'processes/ptp.cjs'));
 
-  ptpProcess.on('message', (data) => {
+  ptpProcess.on('message', async (data) => {
     if (data.type === 'ptp-clocks') {
       sendToRenderer('ptp-clocks', data.clocks);
     } else if (data.type === 'ptp-status') {
       console.log('[PTP]', data.status, data.interface || '');
+    } else if (data.type === 'port-conflict') {
+      console.error('[PTP Port Conflict]', data.message);
+      sendToRenderer('port-conflict', {
+        port: data.port,
+        message: data.message,
+        blockingProcess: null,
+        source: 'ptp',
+      });
     }
   });
 
