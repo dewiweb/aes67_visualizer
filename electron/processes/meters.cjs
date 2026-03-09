@@ -13,6 +13,45 @@ const MAX_INT_16 = 32767;   // 2^15 - 1
 const RTP_HEADER_SIZE = 12;
 const DB_FLOOR = -100;
 
+// ─── ITU-R BS.1770-4 K-weighting filter coefficients @ 48kHz ─────────────────
+// Two biquad IIR stages in series.
+// Stage 1: Pre-filter (high shelf)
+const KW_B1 = [ 1.53512485958697, -2.69169618940638,  1.19839281085285];
+const KW_A1 = [ 1.0,              -1.69065929318241,  0.73248077421585];
+// Stage 2: RLB weighting filter (2nd-order highpass)
+const KW_B2 = [ 1.0,              -2.0,               1.0             ];
+const KW_A2 = [ 1.0,              -1.99004745483398,  0.99007225036603];
+
+/**
+ * Create per-channel K-weighting filter state (2 biquad stages, 2 delay samples each)
+ */
+function makeKwState() {
+  return {
+    x1_s1: 0, x2_s1: 0, y1_s1: 0, y2_s1: 0, // stage 1 delays
+    x1_s2: 0, x2_s2: 0, y1_s2: 0, y2_s2: 0, // stage 2 delays
+  };
+}
+
+/**
+ * Apply both K-weighting biquad stages to one sample, return filtered sample.
+ */
+function applyKweighting(x, st) {
+  // Stage 1
+  const y1 = KW_B1[0] * x + KW_B1[1] * st.x1_s1 + KW_B1[2] * st.x2_s1
+                           - KW_A1[1] * st.y1_s1 - KW_A1[2] * st.y2_s1;
+  st.x2_s1 = st.x1_s1; st.x1_s1 = x;
+  st.y2_s1 = st.y1_s1; st.y1_s1 = y1;
+  // Stage 2
+  const y2 = KW_B2[0] * y1 + KW_B2[1] * st.x1_s2 + KW_B2[2] * st.x2_s2
+                            - KW_A2[1] * st.y1_s2 - KW_A2[2] * st.y2_s2;
+  st.x2_s2 = st.x1_s2; st.x1_s2 = y1;
+  st.y2_s2 = st.y1_s2; st.y1_s2 = y2;
+  return y2;
+}
+
+// LUFS momentary window = 400ms at 48kHz = 19200 samples
+const LUFS_WINDOW_SAMPLES = 19200;
+
 // Active monitors: streamId -> { socket, ip, port, channels, codec, accumulators, sampleCount }
 const monitors = new Map();
 let currentInterface = null;
@@ -46,6 +85,13 @@ function startMonitoring(stream) {
       accumulators: new Array(channels || 2).fill(0),
       peaks: new Array(channels || 2).fill(DB_FLOOR),
       sampleCount: 0,
+      // K-weighting filter state per channel
+      kwState: Array.from({ length: channels || 2 }, () => makeKwState()),
+      // LUFS momentary: ring buffer of squared K-weighted samples per channel
+      kwRing: Array.from({ length: channels || 2 }, () => new Float64Array(LUFS_WINDOW_SAMPLES)),
+      kwRingPos: 0,
+      kwRingFill: 0,   // how many samples accumulated (capped at LUFS_WINDOW_SAMPLES)
+      kwAccum: new Float64Array(channels || 2), // running sum of ring
     };
 
     socket.on('error', (err) => {
@@ -169,9 +215,27 @@ function processRtpPacket(buffer, monitor) {
       sample = buffer.readInt16BE(offset);
     }
 
-    // Accumulate squares for RMS
+    // Normalize sample to [-1.0, 1.0] for K-weighting
+    const maxValue = monitor.codec === 'L24' ? MAX_INT_24 : MAX_INT_16;
+    const normalised = sample / maxValue;
+
     if (channelIdx < monitor.channels) {
+      // dBFS RMS accumulator (unnormalised squared)
       monitor.accumulators[channelIdx] += sample * sample;
+
+      // K-weighted momentary LUFS ring buffer
+      const kw = applyKweighting(normalised, monitor.kwState[channelIdx]);
+      const kwSq = kw * kw;
+      // Subtract oldest value from running sum, add new
+      monitor.kwAccum[channelIdx] -= monitor.kwRing[channelIdx][monitor.kwRingPos];
+      monitor.kwAccum[channelIdx] += kwSq;
+      monitor.kwRing[channelIdx][monitor.kwRingPos] = kwSq;
+    }
+
+    // Advance ring position when last channel of a frame is processed
+    if (channelIdx === monitor.channels - 1) {
+      monitor.kwRingPos = (monitor.kwRingPos + 1) % LUFS_WINDOW_SAMPLES;
+      if (monitor.kwRingFill < LUFS_WINDOW_SAMPLES) monitor.kwRingFill++;
     }
 
     offset += bytesPerSample;
@@ -200,28 +264,39 @@ function calculateAndEmitLevels() {
       }
     } else {
       const maxValue = monitor.codec === 'L24' ? MAX_INT_24 : MAX_INT_16;
-      
+
       for (let i = 0; i < monitor.channels; i++) {
+        // dBFS RMS
         const rms = Math.sqrt(monitor.accumulators[i] / monitor.sampleCount);
         let db = 20 * Math.log10(rms / maxValue);
-
         if (!isFinite(db)) db = DB_FLOOR;
         if (db < DB_FLOOR) db = DB_FLOOR;
         if (db > 0) db = 0;
 
-        // Update peak with decay
+        // Peak with decay
         if (db > monitor.peaks[i]) {
           monitor.peaks[i] = db;
         } else {
           monitor.peaks[i] = Math.max(DB_FLOOR, monitor.peaks[i] - 0.5);
         }
 
+        // LUFS momentary (BS.1770 Eq. 2): -0.691 + 10*log10(mean_square_kw)
+        let lufs = DB_FLOOR;
+        if (monitor.kwRingFill > 0) {
+          const n = monitor.kwRingFill;
+          const meanSq = monitor.kwAccum[i] / n;
+          if (meanSq > 0) {
+            lufs = -0.691 + 10 * Math.log10(meanSq);
+            if (lufs < DB_FLOOR) lufs = DB_FLOOR;
+          }
+        }
+
         levels.push({
-          current: Math.round(db * 10) / 10,
-          peak: Math.round(monitor.peaks[i] * 10) / 10,
+          current: Math.round(db   * 10) / 10,
+          peak:    Math.round(monitor.peaks[i] * 10) / 10,
+          lufs:    Math.round(lufs * 10) / 10,
         });
 
-        // Reset accumulator
         monitor.accumulators[i] = 0;
       }
       

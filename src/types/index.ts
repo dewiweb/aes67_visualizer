@@ -153,8 +153,9 @@ export interface PtpClock {
 }
 
 export interface ChannelLevel {
-  current: number; // dBFS
+  current: number; // dBFS RMS
   peak: number;    // dBFS peak hold
+  lufs?: number;   // LUFS momentary (BS.1770-4, 400ms window)
 }
 
 export interface StreamLevels {

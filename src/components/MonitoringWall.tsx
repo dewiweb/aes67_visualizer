@@ -78,7 +78,9 @@ const MonitorSlotComponent: React.FC<SlotProps> = ({ slot, levels, ptpStatus, t,
                     <LevelMeter
                       current={level.current}
                       peak={level.peak}
+                      lufs={level.lufs}
                       vertical
+                      showLabels
                       className="h-full"
                     />
                     <span className="text-[10px] text-slate-500">{i + 1}</span>

@@ -4,6 +4,7 @@ import { DB_MIN, DB_MAX, DB_FLOOR } from '../types';
 interface LevelMeterProps {
   current: number;
   peak: number;
+  lufs?: number;
   className?: string;
   showLabels?: boolean;
   vertical?: boolean;
@@ -12,6 +13,7 @@ interface LevelMeterProps {
 const LevelMeter: React.FC<LevelMeterProps> = ({
   current,
   peak,
+  lufs,
   className = '',
   showLabels = false,
   vertical = false,
@@ -37,6 +39,10 @@ const LevelMeter: React.FC<LevelMeterProps> = ({
     return 'linear-gradient(to right, #22c55e 0%, #22c55e 70%, #eab308 70%, #eab308 90%, #ef4444 90%, #ef4444 100%)';
   };
 
+  const lufsLabel = lufs !== undefined && lufs > DB_FLOOR
+    ? `${lufs.toFixed(1)} LU`
+    : null;
+
   if (vertical) {
     return (
       <div className={`flex flex-col items-center gap-1 ${className}`}>
@@ -61,6 +67,9 @@ const LevelMeter: React.FC<LevelMeterProps> = ({
           <span className="text-[10px] text-slate-500 font-mono">
             {current > DB_FLOOR ? current.toFixed(0) : '-∞'}
           </span>
+        )}
+        {lufsLabel && (
+          <span className="text-[9px] text-sky-400 font-mono whitespace-nowrap">{lufsLabel}</span>
         )}
       </div>
     );
@@ -89,6 +98,9 @@ const LevelMeter: React.FC<LevelMeterProps> = ({
         <span className="text-[10px] text-slate-500 font-mono w-8 text-right">
           {current > DB_FLOOR ? current.toFixed(0) : '-∞'}
         </span>
+      )}
+      {lufsLabel && (
+        <span className="text-[9px] text-sky-400 font-mono whitespace-nowrap">{lufsLabel}</span>
       )}
     </div>
   );
