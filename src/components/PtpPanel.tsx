@@ -1,9 +1,9 @@
 import React, { useState, useMemo } from 'react';
-import { PtpClock, DanteDevice } from '../types';
+import { PtpClock, NetworkDevice } from '../types';
 
 interface PtpPanelProps {
   clocks: PtpClock[];
-  allDevices: DanteDevice[];
+  allDevices: NetworkDevice[];
 }
 
 function clockClassLabel(cls: number | null): string {
@@ -84,7 +84,7 @@ function clockIdentityToMac(id: string): string | null {
 /**
  * Build a map: normalised EUI-48 MAC -> device name.
  */
-function buildMacMap(devices: DanteDevice[]): Map<string, string> {
+function buildMacMap(devices: NetworkDevice[]): Map<string, string> {
   const m = new Map<string, string>();
   for (const d of devices) {
     if (d.macAddress) {
@@ -99,7 +99,7 @@ function buildMacMap(devices: DanteDevice[]): Map<string, string> {
  * Build a map: IP address -> device name.
  * Covers Dante, RAVENNA, AES67 devices discovered via mDNS.
  */
-function buildIpMap(devices: DanteDevice[]): Map<string, string> {
+function buildIpMap(devices: NetworkDevice[]): Map<string, string> {
   const m = new Map<string, string>();
   for (const d of devices) {
     if (d.ip && d.name) m.set(d.ip, d.name);

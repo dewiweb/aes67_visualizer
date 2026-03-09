@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useRef } from 'react';
-import { Stream, DanteDevice } from '../types';
+import { Stream, NetworkDevice } from '../types';
 import { Server, Clock, Layers, ChevronDown, ChevronRight, AlertCircle, ArrowUpFromLine, ArrowDownToLine, Pencil, Check, X, Link, Unlink } from 'lucide-react';
 
 /** Routing picker state: which (rxDeviceIp, rxChannelId) is being routed */
@@ -11,7 +11,7 @@ interface RoutingTarget {
 
 interface DevicePanelProps {
   streams: Stream[];
-  danteDevices: DanteDevice[];
+  devices: NetworkDevice[];
   t: Record<string, string>;
   onStreamClick?: (stream: Stream) => void;
 }
@@ -19,7 +19,7 @@ interface DevicePanelProps {
 /** Unified view entry: mDNS device info + SAP streams, keyed by IP */
 interface UnifiedDevice {
   ip: string;
-  dante: DanteDevice | null;
+  dante: NetworkDevice | null;
   streams: Stream[];
   ptpGrandmaster?: string;
   ptpVersion?: string;
@@ -28,13 +28,13 @@ interface UnifiedDevice {
 
 /**
  * Build a single unified list keyed by IP.
- * Combines danteDevices (mDNS/ARC) with SAP streams — one entry per IP.
+ * Combines NetworkDevices (mDNS/ARC) with SAP streams — one entry per IP.
  */
-function buildUnifiedList(danteDevices: DanteDevice[], streams: Stream[]): UnifiedDevice[] {
+function buildUnifiedList(devices: NetworkDevice[], streams: Stream[]): UnifiedDevice[] {
   const map = new Map<string, UnifiedDevice>();
 
   // Seed from mDNS/ARC devices
-  for (const dd of danteDevices) {
+  for (const dd of devices) {
     const ip = dd.ip || dd.addresses.find(a => /^\d+\./.test(a)) || dd.host || '';
     if (!ip) continue;
     if (!map.has(ip)) map.set(ip, { ip, dante: dd, streams: [] });
@@ -57,7 +57,7 @@ function buildUnifiedList(danteDevices: DanteDevice[], streams: Stream[]): Unifi
   return Array.from(map.values()).sort((a, b) => a.ip.localeCompare(b.ip));
 }
 
-const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onStreamClick }) => {
+const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t, onStreamClick }) => {
   const [expanded, setExpanded]   = React.useState<Set<string>>(new Set());
   const [renaming, setRenaming]   = useState<string | null>(null);
   const [renameVal, setRenameVal] = useState('');
@@ -123,8 +123,8 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onS
   };
 
   const unified = useMemo(
-    () => buildUnifiedList(danteDevices, streams),
-    [danteDevices, streams]
+    () => buildUnifiedList(devices, streams),
+    [devices, streams]
   );
 
   if (unified.length === 0) {
@@ -321,7 +321,7 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onS
                         const rStatus = routeStatus[key];
 
                         // Collect all TX sources from other Dante devices
-                        const txSources = danteDevices
+                        const txSources = devices
                           .filter(d => d.ip !== ip && (d.txChannelNames?.length ?? 0) > 0)
                           .flatMap(d => d.txChannelNames!.map(tx => ({
                             deviceName: d.name || d.ip,

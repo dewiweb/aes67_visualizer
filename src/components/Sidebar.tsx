@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Plus, Radio, FileText, Server, Download, Clock } from 'lucide-react';
-import { Stream, StreamLevels, StreamPtpStatuses, DanteDevice, PtpClock } from '../types';
+import { Stream, StreamLevels, StreamPtpStatuses, NetworkDevice, PtpClock } from '../types';
 import StreamCard from './StreamCard';
 import DevicePanel from './DevicePanel';
 import PtpPanel from './PtpPanel';
@@ -12,7 +12,7 @@ interface SidebarProps {
   streams: Stream[];
   streamLevels: StreamLevels;
   streamPtpStatuses: StreamPtpStatuses;
-  danteDevices: DanteDevice[];
+  devices: NetworkDevice[];
   ptpClocks: PtpClock[];
   playingStreamId: string | null;
   onAddManualStream: (sdp: string) => void;
@@ -26,7 +26,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   streams,
   streamLevels,
   streamPtpStatuses,
-  danteDevices,
+  devices,
   ptpClocks,
   playingStreamId,
   onAddManualStream,
@@ -49,7 +49,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   // Count unique devices: union of all known IPs across mDNS and SAP sources
   const deviceIpSet = new Set<string>([
-    ...danteDevices.map(d => d.ip).filter(Boolean),
+    ...devices.map(d => d.ip).filter(Boolean),
     ...streams.map(s => s.deviceIp || s.sapSourceIp).filter(Boolean) as string[],
   ]);
   const deviceCount = deviceIpSet.size;
@@ -150,14 +150,14 @@ const Sidebar: React.FC<SidebarProps> = ({
 
         {/* PTP Tab */}
         {activeTab === 'ptp' && (
-          <PtpPanel clocks={ptpClocks} allDevices={danteDevices} />
+          <PtpPanel clocks={ptpClocks} allDevices={devices} />
         )}
 
         {/* Devices Tab */}
         {activeTab === 'devices' && (
           <DevicePanel
             streams={streams}
-            danteDevices={danteDevices}
+            devices={devices}
             t={t}
             onStreamClick={(stream) => onPlayStream(stream, 0, Math.min(1, stream.channels - 1))}
           />

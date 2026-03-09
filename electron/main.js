@@ -297,7 +297,7 @@ function initChildProcesses() {
   danteProcess.on('message', (data) => {
     if (data.type === 'dante-devices') {
       danteDevices = data.devices;
-      sendToRenderer('dante-devices', danteDevices);
+      sendToRenderer('network-devices', danteDevices);
     } else if (data.type === 'ravenna-sdp') {
       // RTSP DESCRIBE returned a SDP — inject into SDP process
       console.log(`[Main] RAVENNA SDP received from ${data.name}, forwarding to SDP process`);

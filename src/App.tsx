@@ -13,7 +13,7 @@ import {
   Stream,
   StreamLevels,
   StreamPtpStatuses,
-  DanteDevice,
+  NetworkDevice,
   PtpClock,
   MonitorSlot,
   NetworkInterface,
@@ -40,7 +40,7 @@ const App: React.FC = () => {
   const [streams, setStreams] = useState<Stream[]>([]);
   const [streamLevels, setStreamLevels] = useState<StreamLevels>({});
   const [streamPtpStatuses, setStreamPtpStatuses] = useState<StreamPtpStatuses>({});
-  const [danteDevices, setDanteDevices] = useState<DanteDevice[]>([]);
+  const [devices, setDevices] = useState<NetworkDevice[]>([]);
   const [ptpClocks, setPtpClocks] = useState<PtpClock[]>([]);
 
   // Monitor slots
@@ -145,9 +145,9 @@ const App: React.FC = () => {
       setMdnsError(data);
     });
 
-    // Subscribe to Dante device list
-    const unsubDanteDevices = window.api.onDanteDevices((devices) => {
-      setDanteDevices(devices);
+    // Subscribe to network device list
+    const unsubDanteDevices = window.api.onNetworkDevices((d) => {
+      setDevices(d);
     });
 
     // Subscribe to PTP status updates (legacy RTCP-based, kept for StreamCard badges)
@@ -431,7 +431,7 @@ const App: React.FC = () => {
             onViewChange={setActiveView}
             streamCount={filteredStreams.filter(s => s.sourceType === 'sap').length}
             deviceCount={new Set([
-              ...danteDevices.map(d => d.ip).filter(Boolean),
+              ...devices.map(d => d.ip).filter(Boolean),
               ...streams.map(s => s.deviceIp || s.sapSourceIp).filter(Boolean) as string[],
             ]).size}
             ptpCount={ptpClocks.length}
@@ -444,7 +444,7 @@ const App: React.FC = () => {
             streams={filteredStreams}
             streamLevels={streamLevels}
             streamPtpStatuses={streamPtpStatuses}
-            danteDevices={danteDevices}
+            devices={devices}
             ptpClocks={ptpClocks}
             slots={slots}
             playingStreamId={playingStreamId}

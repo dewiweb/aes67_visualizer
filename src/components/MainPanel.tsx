@@ -3,7 +3,7 @@ import { Plus, Download } from 'lucide-react';
 import { ViewId } from '../App';
 import {
   Stream, StreamLevels, StreamPtpStatuses,
-  DanteDevice, PtpClock, MonitorSlot, PortConflictData,
+  NetworkDevice, PtpClock, MonitorSlot, PortConflictData,
 } from '../types';
 import StreamCard from './StreamCard';
 import MonitoringWall from './MonitoringWall';
@@ -17,7 +17,7 @@ interface MainPanelProps {
   streams: Stream[];
   streamLevels: StreamLevels;
   streamPtpStatuses: StreamPtpStatuses;
-  danteDevices: DanteDevice[];
+  devices: NetworkDevice[];
   ptpClocks: PtpClock[];
   slots: MonitorSlot[];
   playingStreamId: string | null;
@@ -36,7 +36,7 @@ const MainPanel: React.FC<MainPanelProps> = ({
   streams,
   streamLevels,
   streamPtpStatuses,
-  danteDevices,
+  devices,
   ptpClocks,
   slots,
   playingStreamId,
@@ -128,7 +128,7 @@ const MainPanel: React.FC<MainPanelProps> = ({
           </h2>
           <span className="text-xs text-slate-500">
             {new Set([
-              ...danteDevices.map(d => d.ip).filter(Boolean),
+              ...devices.map(d => d.ip).filter(Boolean),
               ...streams.map(s => s.deviceIp || s.sapSourceIp).filter(Boolean),
             ]).size} {t.devices || 'devices'}
           </span>
@@ -136,7 +136,7 @@ const MainPanel: React.FC<MainPanelProps> = ({
         <div className="flex-1 overflow-y-auto">
           <DevicePanel
             streams={streams}
-            danteDevices={danteDevices}
+            devices={devices}
             t={t}
             onStreamClick={(stream) => onPlayStream(stream, 0, Math.min(1, stream.channels - 1))}
           />
@@ -153,7 +153,7 @@ const MainPanel: React.FC<MainPanelProps> = ({
           <h2 className="text-base font-semibold text-white">PTP — IEEE 1588</h2>
         </div>
         <div className="flex-1 overflow-y-auto">
-          <PtpPanel clocks={ptpClocks} allDevices={danteDevices} />
+          <PtpPanel clocks={ptpClocks} allDevices={devices} />
         </div>
       </div>
     );

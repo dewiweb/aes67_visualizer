@@ -71,7 +71,7 @@ export interface Device {
   channelCount: number;
 }
 
-export interface DanteDevice {
+export interface NetworkDevice {
   /** Primary IPv4 address — registry key */
   ip: string;
   /** mDNS hostname e.g. "device.local." */
@@ -228,7 +228,7 @@ export interface ElectronAPI {
   onSdpStatus: (callback: (data: { status: string; port: number }) => void) => () => void;
   onPtpStatus: (callback: (data: { streamId: string; status: PtpStatus | null }) => void) => () => void;
   onPtpClocks: (callback: (clocks: PtpClock[]) => void) => () => void;
-  onDanteDevices: (callback: (devices: DanteDevice[]) => void) => () => void;
+  onNetworkDevices: (callback: (devices: NetworkDevice[]) => void) => () => void;
   arcSetDeviceName: (ip: string, port: number | null, name: string | null) => Promise<{ ok: boolean; error?: string }>;
   arcSetSubscription: (ip: string, port: number | null, rxChannelId: number, txChannelName: string, txDeviceName: string) => Promise<{ ok: boolean; error?: string }>;
   arcUnsubscribeRx: (ip: string, port: number | null, rxChannelId: number) => Promise<{ ok: boolean; error?: string }>;

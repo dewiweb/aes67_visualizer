@@ -67,10 +67,10 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeAllListeners('ptp-clocks');
   },
 
-  // Dante device list (pure Dante without AES67)
-  onDanteDevices: (callback) => {
-    ipcRenderer.on('dante-devices', (_, data) => callback(data));
-    return () => ipcRenderer.removeAllListeners('dante-devices');
+  // Network device list (Dante, RAVENNA, AES67)
+  onNetworkDevices: (callback) => {
+    ipcRenderer.on('network-devices', (_, data) => callback(data));
+    return () => ipcRenderer.removeAllListeners('network-devices');
   },
 
   // Dante ARC write commands
