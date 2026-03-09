@@ -823,15 +823,27 @@ function injectDevices(devices) {
   for (const dev of devices) {
     if (!dev.isDante) continue;
 
-    // Build clockIdentity from MAC if available
+    // Build clockIdentity from MAC if available.
+    // mDNS TXT 'id' field can be either:
+    //   - 16-char EUI-64: '001dc1fffe506217' (already has FFFE bytes)
+    //   - 12-char EUI-48: '001dc1506217'     (insert FFFE to build EUI-64)
     let clockIdentity = null;
-    if (dev.macAddress && dev.macAddress.length === 16) {
-      const mac = dev.macAddress;
-      clockIdentity = [
-        mac.slice(0,2),  mac.slice(2,4),  mac.slice(4,6),
-        mac.slice(6,8),  mac.slice(8,10), mac.slice(10,12),
-        mac.slice(12,14),mac.slice(14,16),
-      ].map(s => s.toUpperCase()).join('-');
+    if (dev.macAddress) {
+      const mac = dev.macAddress.toLowerCase();
+      let eui64 = null;
+      if (mac.length === 16) {
+        eui64 = mac; // already EUI-64
+      } else if (mac.length === 12) {
+        // EUI-48 → EUI-64: insert FF-FE after OUI (3 bytes)
+        eui64 = mac.slice(0,6) + 'fffe' + mac.slice(6);
+      }
+      if (eui64 && eui64.length === 16) {
+        clockIdentity = [
+          eui64.slice(0,2),  eui64.slice(2,4),  eui64.slice(4,6),
+          eui64.slice(6,8),  eui64.slice(8,10),  eui64.slice(10,12),
+          eui64.slice(12,14),eui64.slice(14,16),
+        ].map(s => s.toUpperCase()).join('-');
+      }
     }
 
     const key = clockIdentity ? `${clockIdentity}@0` : null;
