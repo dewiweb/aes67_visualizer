@@ -143,14 +143,18 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t, onStream
         const isExpandable = hasChannels || devStreams.length > 0;
         const totalCh      = devStreams.reduce((s, st) => s + (st.channels || 0), 0);
 
+        // AES67 effective: mDNS flag OR dante-aes67 SAP streams present for this device
+        const hasDanteAes67Streams = devStreams.some(s => s.streamFamily === 'dante-aes67');
+        const effectiveAES67 = dd?.isAES67 || hasDanteAes67Streams;
+
         // Protocol colour: teal=RAVENNA, blue=AES67, purple=Dante, slate=SAP-only
-        const borderColor = dd?.isRAVENNA ? 'border-teal-900/40'
-                          : dd?.isAES67   ? 'border-blue-900/40'
-                          : dd            ? 'border-purple-900/40'
+        const borderColor = dd?.isRAVENNA    ? 'border-teal-900/40'
+                          : effectiveAES67   ? 'border-blue-900/40'
+                          : dd              ? 'border-purple-900/40'
                           : 'border-slate-700/40';
-        const iconColor   = dd?.isRAVENNA ? 'text-teal-400'
-                          : dd?.isAES67   ? 'text-blue-400'
-                          : dd            ? 'text-purple-400'
+        const iconColor   = dd?.isRAVENNA    ? 'text-teal-400'
+                          : effectiveAES67   ? 'text-blue-400'
+                          : dd              ? 'text-purple-400'
                           : 'text-slate-400';
 
         return (
@@ -215,8 +219,10 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t, onStream
                   {dd?.isDante && !dd.isRAVENNA && (
                     <span className="text-[10px] bg-purple-900/50 text-purple-300 px-1.5 py-0.5 rounded">Dante</span>
                   )}
-                  {dd?.isAES67 && (
-                    <span className="text-[10px] bg-blue-900/50 text-blue-300 px-1.5 py-0.5 rounded">AES67</span>
+                  {dd?.isDante && (
+                    effectiveAES67
+                      ? <span className="text-[10px] bg-blue-900/50 text-blue-300 px-1.5 py-0.5 rounded">AES67 ✓</span>
+                      : <span className="text-[10px] bg-slate-700/60 text-slate-500 px-1.5 py-0.5 rounded">AES67 ✗</span>
                   )}
                   {devStreams.length > 0 && (
                     <span className="text-[10px] bg-green-900/50 text-green-300 px-1.5 py-0.5 rounded">
@@ -259,7 +265,7 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t, onStream
                   {dd?.routerVers && <span className="text-slate-600">fw {dd.routerVers}</span>}
                 </div>
 
-                {dd?.isDante && !dd.isAES67 && (
+                {dd?.isDante && !effectiveAES67 && (
                   <div className="flex items-center gap-1 mt-1 text-[10px] text-yellow-500">
                     <AlertCircle size={10} />
                     <span>Enable AES67 on device to stream</span>
