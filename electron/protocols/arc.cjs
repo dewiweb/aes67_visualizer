@@ -245,4 +245,31 @@ async function getRxChannels(ip, port = DEFAULT_PORT, rxCount = 0, timeout = DEF
   return channels;
 }
 
-module.exports = { query, getTxChannels, getRxChannels, DEFAULT_PORT };
+// Opcode for setting/resetting the device name
+const OPCODE_SET_DEVICE_NAME = 0x1001;
+
+/**
+ * Set or reset the Dante device name via ARC.
+ * @param {string} ip
+ * @param {number} port
+ * @param {string|null} name — null or '' to reset to factory name
+ * @returns {boolean} true if acknowledged
+ */
+async function setDeviceName(ip, port = DEFAULT_PORT, name = null) {
+  let payload;
+  if (!name) {
+    // Reset: empty payload (2 zero bytes = no content)
+    payload = Buffer.from([0x00, 0x00]);
+  } else {
+    // Name: ASCII bytes + null terminator, max 31 chars
+    const trimmed = name.slice(0, 31);
+    const nameBytes = Buffer.from(trimmed + '\0', 'ascii');
+    payload = Buffer.concat([Buffer.from([0x00, 0x00]), nameBytes]);
+  }
+  const raw = await sendRequest(ip, port, buildRequest(OPCODE_SET_DEVICE_NAME, payload));
+  if (!raw || raw.length < 10) return false;
+  const rc = raw.readUInt16BE(8);
+  return rc === RESULT_SUCCESS;
+}
+
+module.exports = { query, getTxChannels, getRxChannels, setDeviceName, DEFAULT_PORT };

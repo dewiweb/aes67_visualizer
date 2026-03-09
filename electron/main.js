@@ -2,8 +2,12 @@ import { app, BrowserWindow, ipcMain, Menu } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { fork, exec } from 'child_process';
+import { createRequire } from 'module';
 import Store from 'electron-store';
 import os from 'os';
+
+const require = createRequire(import.meta.url);
+const arc = require('./protocols/arc.cjs');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -368,6 +372,17 @@ function setupIpcHandlers() {
   ipcMain.on('set-audio-device', (event, device) => {
     currentAudioDevice = device;
     store.set('audioInterface', device);
+  });
+
+  // Dante ARC write: rename device
+  ipcMain.handle('arc-set-device-name', async (event, { ip, port, name }) => {
+    try {
+      const ok = await arc.setDeviceName(ip, port || arc.DEFAULT_PORT, name || null);
+      if (ok && danteProcess) danteProcess.send({ type: 'refresh' });
+      return { ok };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
   });
 }
 

@@ -1,6 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useRef } from 'react';
 import { Stream, DanteDevice } from '../types';
-import { Server, Clock, Layers, ChevronDown, ChevronRight, AlertCircle, ArrowUpFromLine, ArrowDownToLine } from 'lucide-react';
+import { Server, Clock, Layers, ChevronDown, ChevronRight, AlertCircle, ArrowUpFromLine, ArrowDownToLine, Pencil, Check, X } from 'lucide-react';
 
 interface DevicePanelProps {
   streams: Stream[];
@@ -51,7 +51,11 @@ function buildUnifiedList(danteDevices: DanteDevice[], streams: Stream[]): Unifi
 }
 
 const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onStreamClick }) => {
-  const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
+  const [expanded, setExpanded]   = React.useState<Set<string>>(new Set());
+  const [renaming, setRenaming]   = useState<string | null>(null); // IP being renamed
+  const [renameVal, setRenameVal] = useState('');
+  const [renameStatus, setRenameStatus] = useState<Record<string, 'ok' | 'err' | null>>({});
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   const toggle = (ip: string) => {
     setExpanded(prev => {
@@ -59,6 +63,24 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onS
       if (next.has(ip)) next.delete(ip); else next.add(ip);
       return next;
     });
+  };
+
+  const startRename = (ip: string, currentName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRenaming(ip);
+    setRenameVal(currentName);
+    setTimeout(() => renameInputRef.current?.select(), 50);
+  };
+
+  const cancelRename = () => { setRenaming(null); setRenameVal(''); };
+
+  const confirmRename = async (ip: string) => {
+    const name = renameVal.trim().slice(0, 31);
+    setRenaming(null);
+    if (!window.api?.arcSetDeviceName) return;
+    const { ok } = await window.api.arcSetDeviceName(ip, null, name || null);
+    setRenameStatus(prev => ({ ...prev, [ip]: ok ? 'ok' : 'err' }));
+    setTimeout(() => setRenameStatus(prev => ({ ...prev, [ip]: null })), 3000);
   };
 
   const unified = useMemo(
@@ -105,9 +127,46 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onS
               <div className="flex-1 min-w-0">
                 {/* Row 1: name + protocol badges */}
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="font-medium text-sm text-white truncate">
-                    {dd?.name || ip}
-                  </span>
+                  {/* Inline rename for Dante devices */}
+                  {renaming === ip ? (
+                    <form
+                      className="flex items-center gap-1"
+                      onSubmit={e => { e.preventDefault(); confirmRename(ip); }}
+                    >
+                      <input
+                        ref={renameInputRef}
+                        value={renameVal}
+                        onChange={e => setRenameVal(e.target.value)}
+                        maxLength={31}
+                        className="bg-slate-700 border border-blue-500 rounded px-1.5 py-0.5 text-sm text-white w-36 focus:outline-none"
+                        autoFocus
+                      />
+                      <button type="submit" className="text-emerald-400 hover:text-emerald-300 p-0.5">
+                        <Check size={13} />
+                      </button>
+                      <button type="button" onClick={cancelRename} className="text-slate-500 hover:text-slate-300 p-0.5">
+                        <X size={13} />
+                      </button>
+                    </form>
+                  ) : (
+                    <span className="flex items-center gap-1 group">
+                      <span className={`font-medium text-sm truncate ${
+                        renameStatus[ip] === 'ok'  ? 'text-emerald-400' :
+                        renameStatus[ip] === 'err' ? 'text-red-400' : 'text-white'
+                      }`}>
+                        {dd?.name || ip}
+                      </span>
+                      {dd?.isDante && (
+                        <button
+                          onClick={e => startRename(ip, dd?.name || '', e)}
+                          className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-slate-300 transition-opacity p-0.5"
+                          title="Rename device"
+                        >
+                          <Pencil size={10} />
+                        </button>
+                      )}
+                    </span>
+                  )}
                   {dd?.isRAVENNA && (
                     <span className="text-[10px] bg-teal-900/50 text-teal-300 px-1.5 py-0.5 rounded">RAVENNA</span>
                   )}

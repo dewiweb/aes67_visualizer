@@ -72,4 +72,7 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('dante-devices', (_, data) => callback(data));
     return () => ipcRenderer.removeAllListeners('dante-devices');
   },
+
+  // Dante ARC write commands
+  arcSetDeviceName: (ip, port, name) => ipcRenderer.invoke('arc-set-device-name', { ip, port, name }),
 });
