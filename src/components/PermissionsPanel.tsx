@@ -29,11 +29,11 @@ const PERMISSION_MATRIX: PermissionRow[] = [
   {
     port: 5353,
     protocol: 'UDP multicast',
-    usage: 'mDNS device discovery — via avahi-browse (Linux) / Bonjour dns-sd (Windows)',
+    usage: 'mDNS device discovery — via multicast-dns raw socket (Linux) / Bonjour dns-sd (Windows)',
     windows: 'ok',
-    linux: 'warn',
+    linux: 'ok',
     windowsNote: 'Requires Bonjour Service (Apple)',
-    linuxNote: 'Requires avahi-daemon running + avahi-utils installed',
+    linuxNote: 'Raw mDNS socket — no avahi/D-Bus required',
   },
   {
     port: '319, 320',

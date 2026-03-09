@@ -237,7 +237,7 @@ export interface ElectronAPI {
 }
 
 export interface PortConflictData {
-  port: number;
+  port: number | string;
   message: string;
   blockingProcess: {
     pid: number;

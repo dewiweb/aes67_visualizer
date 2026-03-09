@@ -124,7 +124,7 @@ function checkPrivilegedPorts() {
       console.warn('[Main] PTP ports 319/320 not accessible — elevation needed on Linux');
       // Notify renderer once it is ready
       const notify = () => sendToRenderer('port-conflict', {
-        port: 319,
+        port: '319/320',
         code: 'EACCES',
         message:
           'PTP monitoring (ports 319/320) requires elevated privileges on Linux.\n\n' +
