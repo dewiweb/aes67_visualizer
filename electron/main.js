@@ -97,6 +97,54 @@ async function findProcessUsingPort(port) {
   });
 }
 
+/**
+ * Check if privileged ports (319/320) are accessible.
+ * On Linux, ports <1024 require CAP_NET_BIND_SERVICE or ip_unprivileged_port_start tuning.
+ * Sends a 'port-conflict' notification to the renderer if access is denied.
+ * Called once at startup, before PTP process is forked.
+ */
+function checkPrivilegedPorts() {
+  if (process.platform === 'win32' || process.platform === 'darwin') return; // no issue on these
+
+  const dgram = require('dgram');
+  const sock = dgram.createSocket({ type: 'udp4' });
+
+  sock.on('error', (err) => {
+    sock.close();
+    if (err.code === 'EACCES') {
+      console.warn('[Main] PTP ports 319/320 not accessible — elevation needed on Linux');
+      // Notify renderer once it is ready
+      const notify = () => sendToRenderer('port-conflict', {
+        port: 319,
+        code: 'EACCES',
+        message:
+          'PTP monitoring (ports 319/320) requires elevated privileges on Linux.\n\n' +
+          'Option 1 — persistent sysctl (recommended):\n' +
+          '  echo "net.ipv4.ip_unprivileged_port_start=319" | sudo tee /etc/sysctl.d/99-ptp.conf\n' +
+          '  sudo sysctl -p /etc/sysctl.d/99-ptp.conf\n\n' +
+          'Option 2 — temporary (reset on reboot):\n' +
+          '  sudo sysctl -w net.ipv4.ip_unprivileged_port_start=319\n\n' +
+          'Option 3 — setcap on extracted AppImage binary:\n' +
+          '  ./aes67-visualizer.AppImage --appimage-extract\n' +
+          '  sudo setcap cap_net_bind_service=+eip squashfs-root/aes67-visualizer',
+        blockingProcess: null,
+        source: 'ptp',
+      });
+      // Defer until window is ready
+      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.isLoading()) {
+        mainWindow.webContents.once('did-finish-load', () => setTimeout(notify, 1000));
+      } else {
+        setTimeout(notify, 1500);
+      }
+    }
+  });
+
+  sock.bind({ port: 319, exclusive: false }, () => {
+    // Success — ports are accessible, close probe socket immediately
+    sock.close();
+  });
+}
+
 function getNetworkInterfaces() {
   const interfaces = os.networkInterfaces();
   const result = [];
@@ -399,6 +447,7 @@ app.whenReady().then(() => {
   createWindow();
   initChildProcesses();
   setupIpcHandlers();
+  checkPrivilegedPorts();
 
   // Auto-select first interface if none saved
   if (!currentNetworkInterface) {

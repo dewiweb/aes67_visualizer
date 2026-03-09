@@ -62,10 +62,12 @@ const PERMISSION_MATRIX: PermissionRow[] = [
     port: '5004+',
     protocol: 'UDP multicast',
     usage: 'RTP audio metering (stream-dependent)',
-    windows: 'ok',
-    linux: 'ok',
-    macos: 'ok',
-    linuxNote: 'Bind on 0.0.0.0 (already done)',
+    windows: 'warn',
+    linux: 'warn',
+    macos: 'warn',
+    windowsNote: 'Port 5004 may conflict with Apple MIDI / loopMIDI / rtpMIDI driver',
+    linuxNote: 'Port 5004 may conflict with jackd, pipewire-jack, raveloxmidi. Check: sudo lsof -i UDP:5004',
+    macosNote: 'Port 5004 often used by Apple RTP MIDI (rtpmidi). Fix: System Settings → General → AirDrop & Handoff → disable "AirPlay Receiver"',
   },
   {
     port: 554,
@@ -263,11 +265,23 @@ sudo systemctl enable --now avahi-daemon`}
             🍎 macOS
             {currentOs === 'macos' && <span className="text-slate-400 text-[10px]">(current OS)</span>}
           </div>
-          <div className="text-slate-400 space-y-1">
+          <div className="text-slate-400 space-y-1.5">
             <div>✅ mDNS via built-in mDNSResponder — no setup needed.</div>
-            <div>✅ PTP ports 319/320 accessible without privilege (macOS allows UDP bind below 1024 for non-root).</div>
+            <div>✅ PTP ports 319/320 accessible without privilege.</div>
             <div>
               <span className="text-slate-300">Firewall</span>: System Settings → Network → Firewall → allow incoming connections for AES67 Visualizer.
+            </div>
+            <div className="border-t border-slate-700/40 pt-1.5">
+              <span className="text-amber-300">⚠ Port 5004 — RTP MIDI conflict</span>
+              <div className="mt-1">macOS 10.14+ enables Apple RTP MIDI (rtpmidi) by default on UDP 5004.</div>
+              <div className="mt-1 font-medium text-slate-300">Fix (macOS 13+):</div>
+              <pre className="bg-slate-900/60 rounded px-2 py-1.5 text-[10px] font-mono text-emerald-300 whitespace-pre-wrap mt-1">
+{`System Settings → General → AirDrop & Handoff → disable "AirPlay Receiver"`}
+              </pre>
+              <div className="mt-1 font-medium text-slate-300">Fix (all versions, terminal):</div>
+              <pre className="bg-slate-900/60 rounded px-2 py-1.5 text-[10px] font-mono text-emerald-300 whitespace-pre-wrap mt-1">
+{`sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.rtpmidid.plist`}
+              </pre>
             </div>
           </div>
         </div>

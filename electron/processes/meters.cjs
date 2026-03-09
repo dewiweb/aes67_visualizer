@@ -51,10 +51,27 @@ function startMonitoring(stream) {
       
       // Detect port conflicts
       if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {
+        const isRtpMidiPort = port === 5004;
+        const platform = require('os').platform();
+        let message = `Port ${port} conflict: ${err.message}`;
+        if (isRtpMidiPort && platform === 'darwin') {
+          message = `Port 5004 conflict — likely Apple RTP MIDI (rtpmidi daemon).\n` +
+            `Fix: System Settings → General → AirDrop & Handoff → disable "AirPlay Receiver"\n` +
+            `or: sudo launchctl unload -w /Library/LaunchDaemons/com.apple.rtp.plist\n` +
+            `or: sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.rtpmidid.plist`;
+        } else if (isRtpMidiPort && platform === 'linux') {
+          message = `Port 5004 conflict — another process is using the RTP default port.\n` +
+            `Check: sudo lsof -i UDP:5004\n` +
+            `Common culprits: jackd, pipewire-jack, qjackctl, raveloxmidi`;
+        } else if (isRtpMidiPort && platform === 'win32') {
+          message = `Port 5004 conflict — another process is using the RTP default port.\n` +
+            `Check: netstat -ano | findstr :5004\n` +
+            `Common culprits: Apple MIDI, loopMIDI, rtpMIDI driver`;
+        }
         process.send({
           type: 'port-conflict',
           port: port,
-          message: `Port ${port} conflict: ${err.message}`,
+          message,
           code: err.code,
           stream: { id, name: stream.name, mcast, port }
         });
