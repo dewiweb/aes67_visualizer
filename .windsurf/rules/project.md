@@ -29,7 +29,7 @@ Built with Electron 33 + React 18 + TypeScript + TailwindCSS.
 - SAP multicast socket binds on `0.0.0.0` on Linux, interface IP on Windows
 - mDNS uses `dns-sd` on Windows/macOS, `avahi-browse` on Linux
 - PTP ports 319/320 require `cap_net_bind_service` on Linux AppImage
-- PTPv1 (Dante) discriminant: `buf[0]=0x01` AND `buf[2]≠0x00` (subdomain field, Dante `_DFLT`=`0x5F`)
+- PTPv1 (Dante) discriminant: `buf[0]=0x00` (versionPTP) AND `buf[1]=0x01` (versionNetwork) — confirmed from real Dante captures (v1.3.14 fix). Subdomain `_DFLT` at offset 4 (`0x5F 0x44 0x46 0x4C 0x54...`). messageType is 2-byte uint16BE at offset 2.
 - `StreamFamily` detected from SDP content in `aes67.cjs:validateSdp()` — `k=Dante` field + `ts-refclk` + tool string
 - `PtpPanel` receives `allDevices: NetworkDevice[]` for IP→name and MAC→name resolution
 
@@ -376,3 +376,36 @@ RAVENNA has no equivalent to ARC's `0x3010` subscription command. Options:
 
 **Decision**: RAVENNA routing not implemented. RAVENNA devices can be subscribed to Dante TX sources
 via Dante Controller (which uses ARC). For RAVENNA-to-RAVENNA routing, the device's own web UI must be used.
+
+### rhastie/easy-nmos
+- **URL**: https://github.com/rhastie/easy-nmos
+- **License**: Apache-2.0
+- **Language**: Docker Compose (NVIDIA / AMWA)
+- **Scope**: Easy NMOS IS-04/IS-05 setup for testing — Docker Compose with 3 containers: NMOS Registry (`nmos-cpp`), virtual NMOS Node (`nmos-cpp`), AMWA NMOS Testing Tool.
+- **Key learnings — NMOS service structure**:
+  - IS-04 Node API: `GET /x-nmos/node/v1.x/self` → node identity (id, label, description, tags, href, caps, services, clocks, interfaces)
+  - IS-04 Node API: `GET /x-nmos/node/v1.x/senders` → list of RTP senders (with SDP manifest_href)
+  - IS-04 Node API: `GET /x-nmos/node/v1.x/receivers` → list of RTP receivers
+  - IS-04 Registry API: `GET /x-nmos/registration/v1.x/` → registration endpoint (nodes POST themselves here)
+  - IS-04 Query API: `GET /x-nmos/query/v1.x/nodes` → query all registered nodes
+  - IS-05 Connection API: `GET /x-nmos/connection/v1.x/single/senders` + `PATCH .../active` → routing control
+- **Key learnings — mDNS service types** (IS-04 discovery):
+  - `_nmos-node._tcp` — IS-04 Node (advertised by each device)
+  - `_nmos-registration._tcp` — IS-04 Registry
+  - `_nmos-query._tcp` — IS-04 Query API
+  - `_nmos-connection._tcp` — IS-05 Connection API
+  - `_nmos-system._tcp` — IS-09 System API
+- **Key learnings — default ports**:
+  - Registry + Node APIs: port **80** (via mDNS TXT `api_proto=http`, `api_ver=v1.0,v1.1,v1.2,v1.3`)
+  - Testing tool: port **5000**
+  - Admin UI: `http://nmos-registry.local/admin`
+- **Key learnings — nmos-cpp (Sony)**:
+  - Reference C++ implementation of IS-04, IS-05, IS-07, IS-08, IS-09
+  - Config via JSON files (`registry.json`, `node.json`)
+  - Supports BCP-002-01 (natural grouping), BCP-003-01 (secure comms with TLS)
+  - `nmos-cpp` is the de-facto reference implementation used by most hardware vendors
+- **What easy-nmos confirms for our project**:
+  - NMOS IS-04 Node API is unauthenticated by default (no 401 expected)
+  - 500 on `/x-nmos/` = backend process not running (not an auth issue)
+  - Merging RAVENNA devices with 500 on NMOS → NMOS node process disabled in their firmware config
+  - For discovery: browse `_nmos-node._tcp` mDNS + HTTP GET `/x-nmos/node/v1.3/self` per device
