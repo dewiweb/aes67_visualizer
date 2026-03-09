@@ -212,7 +212,8 @@ function sendToRenderer(channel, data) {
 function initChildProcesses() {
   // SDP/SAP Discovery Process
   sdpProcess = fork(path.join(__dirname, 'processes/sdp.cjs'));
-  
+  sdpProcess.on('exit', () => { sdpProcess = null; });
+
   sdpProcess.on('message', async (data) => {
     if (data.type === 'streams') {
       sapStreams = data.streams;
@@ -253,6 +254,7 @@ function initChildProcesses() {
 
   // PTP Monitor Process
   ptpProcess = fork(path.join(__dirname, 'processes/ptp.cjs'));
+  ptpProcess.on('exit', () => { ptpProcess = null; });
 
   ptpProcess.on('message', async (data) => {
     if (data.type === 'ptp-clocks') {
@@ -272,7 +274,8 @@ function initChildProcesses() {
 
   // Audio Playback Process
   audioProcess = fork(path.join(__dirname, 'processes/audio.cjs'));
-  
+  audioProcess.on('exit', () => { audioProcess = null; });
+
   audioProcess.on('message', (data) => {
     if (data.type === 'status') {
       sendToRenderer('audio-status', data);
@@ -283,7 +286,8 @@ function initChildProcesses() {
 
   // Meters Process (level monitoring)
   metersProcess = fork(path.join(__dirname, 'processes/meters.cjs'));
-  
+  metersProcess.on('exit', () => { metersProcess = null; });
+
   metersProcess.on('message', async (data) => {
     if (data.type === 'levels') {
       sendToRenderer('audio-levels', data.levels);
@@ -309,15 +313,11 @@ function initChildProcesses() {
       danteDevices = data.devices;
       sendToRenderer('network-devices', danteDevices);
       // Forward device list to PTP process for clock pre-population from mDNS MACs
-      if (ptpProcess) {
-        ptpProcess.send({ type: 'devices', devices: danteDevices });
-      }
+      safeSend(ptpProcess, { type: 'devices', devices: danteDevices });
     } else if (data.type === 'ravenna-sdp') {
       // RTSP DESCRIBE returned a SDP — inject into SDP process
       console.log(`[Main] RAVENNA SDP received from ${data.name}, forwarding to SDP process`);
-      if (sdpProcess) {
-        sdpProcess.send({ type: 'add-stream', sdp: data.sdp, sourceIp: data.sourceIp });
-      }
+      safeSend(sdpProcess, { type: 'add-stream', sdp: data.sdp, sourceIp: data.sourceIp });
     } else if (data.type === 'status') {
       console.log('[Dante]', data.status);
     } else if (data.type === 'error') {
@@ -351,15 +351,9 @@ function setupIpcHandlers() {
       store.set('interface', iface);
       
       // Reinitialize SDP with new interface (full restart)
-      if (sdpProcess) {
-        sdpProcess.send({ type: 'init', address });
-      }
-      if (metersProcess) {
-        metersProcess.send({ type: 'set-interface', address });
-      }
-      if (ptpProcess) {
-        ptpProcess.send({ type: 'start', interface: address });
-      }
+      safeSend(sdpProcess,    { type: 'init',          address });
+      safeSend(metersProcess, { type: 'set-interface', address });
+      safeSend(ptpProcess,    { type: 'start', interface: address });
       safeSend(danteProcess, { type: 'refresh' });
 
       sendToRenderer('interface-changed', iface);
@@ -368,64 +362,51 @@ function setupIpcHandlers() {
 
   // Stream monitoring (meters + PTP)
   ipcMain.on('start-monitoring', (event, stream) => {
-    if (metersProcess) {
-      metersProcess.send({ type: 'start', stream });
-    }
+    safeSend(metersProcess, { type: 'start', stream });
     // PTP monitoring is now network-wide (ports 319/320), not per-stream
   });
 
   ipcMain.on('stop-monitoring', (event, streamId) => {
-    if (metersProcess) {
-      metersProcess.send({ type: 'stop', streamId });
-    }
+    safeSend(metersProcess, { type: 'stop', streamId });
     // PTP monitoring is network-wide, no per-stream stop needed
   });
 
   // Audio playback
   ipcMain.on('play-stream', (event, data) => {
-    if (audioProcess) {
-      audioProcess.send({ 
-        type: 'play', 
-        ...data,
-        audioDevice: currentAudioDevice,
-        networkInterface: currentNetworkInterface?.address,
-      });
-    }
+    safeSend(audioProcess, {
+      type: 'play',
+      ...data,
+      audioDevice: currentAudioDevice,
+      networkInterface: currentNetworkInterface?.address,
+    });
   });
 
   ipcMain.on('stop-playback', () => {
-    if (audioProcess) {
-      audioProcess.send({ type: 'stop' });
-    }
+    safeSend(audioProcess, { type: 'stop' });
   });
 
   // Manual SDP stream
   ipcMain.on('add-manual-stream', (event, sdpText) => {
-    if (sdpProcess) {
-      sdpProcess.send({ type: 'add-manual', sdp: sdpText });
-    }
+    safeSend(sdpProcess, { type: 'add-manual', sdp: sdpText });
   });
 
   ipcMain.on('remove-stream', (event, streamId) => {
-    if (sdpProcess) {
-      sdpProcess.send({ type: 'remove', streamId });
-    }
+    safeSend(sdpProcess, { type: 'remove', streamId });
   });
 
   // Settings
   ipcMain.on('save-settings', (event, settings) => {
     persistentData.settings = { ...persistentData.settings, ...settings };
     store.set('persistentData', persistentData);
-    
-    if (sdpProcess && settings.sdpDeleteTimeout !== undefined) {
-      sdpProcess.send({ type: 'set-timeout', timeout: settings.sdpDeleteTimeout });
+    if (settings.sdpDeleteTimeout !== undefined) {
+      safeSend(sdpProcess, { type: 'set-timeout', timeout: settings.sdpDeleteTimeout });
     }
   });
 
   // Audio device
   ipcMain.handle('get-audio-devices', async () => {
     return new Promise((resolve) => {
-      if (audioProcess) {
+      if (audioProcess && audioProcess.connected) {
         const handler = (data) => {
           if (data.type === 'devices') {
             audioProcess.off('message', handler);
@@ -498,16 +479,11 @@ app.whenReady().then(() => {
 
   // Initialize SDP, Meters, PTP and Discovery processes with current interface
   if (currentNetworkInterface) {
-    if (sdpProcess) {
-      sdpProcess.send({ type: 'init', address: currentNetworkInterface.address });
-    }
-    if (metersProcess) {
-      metersProcess.send({ type: 'set-interface', address: currentNetworkInterface.address });
-    }
-    if (ptpProcess) {
-      ptpProcess.send({ type: 'start', interface: currentNetworkInterface.address });
-    }
-    safeSend(danteProcess, { type: 'init' });
+    const addr = currentNetworkInterface.address;
+    safeSend(sdpProcess,    { type: 'init',          address: addr });
+    safeSend(metersProcess, { type: 'set-interface', address: addr });
+    safeSend(ptpProcess,    { type: 'start', interface: addr });
+    safeSend(danteProcess,  { type: 'init' });
   }
 
   app.on('activate', () => {
