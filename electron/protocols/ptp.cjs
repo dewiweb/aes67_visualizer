@@ -591,76 +591,99 @@ function handlePacket(buf, rinfo) {
 
 // ── Output ────────────────────────────────────────────────────────────────────
 
-let emitTimer = null;
+let emitTimer    = null;
+let lastEmitTime = 0;
+const EMIT_INTERVAL_MS = 1000;
 
-function emitUpdate() {
-  clearTimeout(emitTimer);
-  emitTimer = setTimeout(() => {
-    const list = [];
-    for (const [key, clock] of clocks) {
-      // Prune clocks not seen for > 30s (missed 3+ announce intervals)
-      if (Date.now() - clock.lastSeen > 30000) {
-        clocks.delete(key);
-        continue;
-      }
-      // Infer clockRole:
-      //   grandmaster: clockIdentity === grandmasterIdentity
-      //   boundary:    explicit flag (PTPv1) OR stepsRemoved > 0 AND syncCount > 0 (PTPv2 heuristic)
-      //   slave:       stepsRemoved > 0 AND syncCount == 0
-      let clockRole;
-      if (clock.isGrandmaster) {
-        clockRole = 'grandmaster';
-      } else if (clock.clockRole === 'boundary' || clock.grandmasterIsBoundaryClock) {
-        clockRole = 'boundary'; // explicit from PTPv1 grandmasterIsBoundaryClock flag
-      } else if ((clock.stepsRemoved ?? 0) > 0 && clock.syncCount > 0) {
-        clockRole = 'boundary'; // PTPv2 heuristic
-      } else {
-        clockRole = 'slave';
-      }
+function pruneClocks() {
+  const now = Date.now();
+  for (const [key, clock] of clocks) {
+    // Prune clocks not seen for > 120s — PTPv1 Sync rate is ~1Hz, allow for
+    // network jitter and packet loss on busy networks with many devices
+    if (now - clock.lastSeen > 120000) {
+      clocks.delete(key);
+      offsetHistory.delete(key);
+      console.log(`[PTP] Pruned stale clock ${key}`);
+    }
+  }
+}
 
-      list.push({
-        clockIdentity:        clock.clockIdentity,
-        displayId:            formatClockId(clock.clockIdentity),
-        senderIp:             clock.senderIp || null,
-        domainNumber:         clock.domainNumber,
-        isGrandmaster:        clock.isGrandmaster,
-        clockRole,
-        ptpVersion:           clock.ptpVersion ?? null,
-        ptpProfile:           clock.ptpProfile  || null,
-        ptpTimescale:         clock.ptpTimescale ?? null,
-        timeTraceable:        clock.timeTraceable ?? null,
-        freqTraceable:        clock.freqTraceable ?? null,
-        grandmasterIdentity:  clock.grandmasterIdentity || null,
-        grandmasterDisplayId: clock.grandmasterIdentity ? formatClockId(clock.grandmasterIdentity) : null,
-        priority1:            clock.grandmasterPriority1 ?? null,
-        priority2:            clock.grandmasterPriority2 ?? null,
-        clockClass:              clock.clockClass ?? null,
-        clockAccuracy:           clock.clockAccuracy || null,
-        grandmasterClockStratum: clock.grandmasterClockStratum ?? null,
-        grandmasterIsBoundaryClock: clock.grandmasterIsBoundaryClock ?? null,
-        timeSource:              clock.timeSource || null,
-        stepsRemoved:         clock.stepsRemoved ?? null,
-        currentUtcOffset:     clock.currentUtcOffset ?? null,
-        logSyncInterval:      clock.logSyncInterval ?? null,
-        logAnnounceInterval:  clock.logAnnounceInterval ?? null,
-        offsetMeanUs:         clock.offsetMeanUs ?? null,
-        offsetStddevUs:       clock.offsetStddevUs ?? null,
-        offsetSamples:        clock.offsetSamples ?? 0,
-        lastSeen:             clock.lastSeen,
-        announceCount:        clock.announceCount,
-        syncCount:            clock.syncCount,
-      });
+function doEmit() {
+  lastEmitTime = Date.now();
+  pruneClocks();
+
+  const list = [];
+  for (const [, clock] of clocks) {
+    // Infer clockRole:
+    //   grandmaster: clockIdentity === grandmasterIdentity
+    //   boundary:    explicit flag (PTPv1) OR stepsRemoved > 0 AND syncCount > 0 (PTPv2 heuristic)
+    //   slave:       stepsRemoved > 0 AND syncCount == 0
+    let clockRole;
+    if (clock.isGrandmaster) {
+      clockRole = 'grandmaster';
+    } else if (clock.clockRole === 'boundary' || clock.grandmasterIsBoundaryClock) {
+      clockRole = 'boundary'; // explicit from PTPv1 grandmasterIsBoundaryClock flag
+    } else if ((clock.stepsRemoved ?? 0) > 0 && clock.syncCount > 0) {
+      clockRole = 'boundary'; // PTPv2 heuristic
+    } else {
+      clockRole = 'slave';
     }
 
-    // Sort: grandmasters first, then by domain, then by clockIdentity
-    list.sort((a, b) => {
-      if (a.isGrandmaster !== b.isGrandmaster) return a.isGrandmaster ? -1 : 1;
-      if (a.domainNumber !== b.domainNumber) return a.domainNumber - b.domainNumber;
-      return a.clockIdentity.localeCompare(b.clockIdentity);
+    list.push({
+      clockIdentity:        clock.clockIdentity,
+      displayId:            formatClockId(clock.clockIdentity),
+      senderIp:             clock.senderIp || null,
+      domainNumber:         clock.domainNumber,
+      isGrandmaster:        clock.isGrandmaster,
+      clockRole,
+      ptpVersion:           clock.ptpVersion ?? null,
+      ptpProfile:           clock.ptpProfile  || null,
+      ptpTimescale:         clock.ptpTimescale ?? null,
+      timeTraceable:        clock.timeTraceable ?? null,
+      freqTraceable:        clock.freqTraceable ?? null,
+      grandmasterIdentity:  clock.grandmasterIdentity || null,
+      grandmasterDisplayId: clock.grandmasterIdentity ? formatClockId(clock.grandmasterIdentity) : null,
+      priority1:            clock.grandmasterPriority1 ?? null,
+      priority2:            clock.grandmasterPriority2 ?? null,
+      clockClass:              clock.clockClass ?? null,
+      clockAccuracy:           clock.clockAccuracy || null,
+      grandmasterClockStratum: clock.grandmasterClockStratum ?? null,
+      grandmasterIsBoundaryClock: clock.grandmasterIsBoundaryClock ?? null,
+      timeSource:              clock.timeSource || null,
+      stepsRemoved:         clock.stepsRemoved ?? null,
+      currentUtcOffset:     clock.currentUtcOffset ?? null,
+      logSyncInterval:      clock.logSyncInterval ?? null,
+      logAnnounceInterval:  clock.logAnnounceInterval ?? null,
+      offsetMeanUs:         clock.offsetMeanUs ?? null,
+      offsetStddevUs:       clock.offsetStddevUs ?? null,
+      offsetSamples:        clock.offsetSamples ?? 0,
+      lastSeen:             clock.lastSeen,
+      announceCount:        clock.announceCount,
+      syncCount:            clock.syncCount,
     });
+  }
 
-    process.send({ type: 'ptp-clocks', clocks: list });
-  }, 200);
+  // Sort: grandmasters first, then by domain, then by clockIdentity
+  list.sort((a, b) => {
+    if (a.isGrandmaster !== b.isGrandmaster) return a.isGrandmaster ? -1 : 1;
+    if (a.domainNumber !== b.domainNumber) return a.domainNumber - b.domainNumber;
+    return a.clockIdentity.localeCompare(b.clockIdentity);
+  });
+
+  process.send({ type: 'ptp-clocks', clocks: list });
+}
+
+function emitUpdate() {
+  const now = Date.now();
+  const sinceLastEmit = now - lastEmitTime;
+  clearTimeout(emitTimer);
+  if (sinceLastEmit >= EMIT_INTERVAL_MS) {
+    // Enough time has passed — emit immediately
+    doEmit();
+  } else {
+    // Schedule emit for when the interval completes
+    emitTimer = setTimeout(doEmit, EMIT_INTERVAL_MS - sinceLastEmit);
+  }
 }
 
 // ── Socket management ─────────────────────────────────────────────────────────
