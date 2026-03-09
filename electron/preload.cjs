@@ -8,14 +8,16 @@ contextBridge.exposeInMainWorld('api', {
   getInterfaces: () => ipcRenderer.invoke('get-interfaces'),
   setInterface: (address) => ipcRenderer.send('set-interface', address),
   onInterfaceChanged: (callback) => {
-    ipcRenderer.on('interface-changed', (_, data) => callback(data));
-    return () => ipcRenderer.removeAllListeners('interface-changed');
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('interface-changed', handler);
+    return () => ipcRenderer.removeListener('interface-changed', handler);
   },
   
   // Streams
   onStreamsUpdate: (callback) => {
-    ipcRenderer.on('streams-update', (_, data) => callback(data));
-    return () => ipcRenderer.removeAllListeners('streams-update');
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('streams-update', handler);
+    return () => ipcRenderer.removeListener('streams-update', handler);
   },
   addManualStream: (sdp) => ipcRenderer.send('add-manual-stream', sdp),
   removeStream: (streamId) => ipcRenderer.send('remove-stream', streamId),
@@ -24,16 +26,18 @@ contextBridge.exposeInMainWorld('api', {
   startMonitoring: (stream) => ipcRenderer.send('start-monitoring', stream),
   stopMonitoring: (streamId) => ipcRenderer.send('stop-monitoring', streamId),
   onAudioLevels: (callback) => {
-    ipcRenderer.on('audio-levels', (_, data) => callback(data));
-    return () => ipcRenderer.removeAllListeners('audio-levels');
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('audio-levels', handler);
+    return () => ipcRenderer.removeListener('audio-levels', handler);
   },
   
   // Audio playback
   playStream: (data) => ipcRenderer.send('play-stream', data),
   stopPlayback: () => ipcRenderer.send('stop-playback'),
   onAudioStatus: (callback) => {
-    ipcRenderer.on('audio-status', (_, data) => callback(data));
-    return () => ipcRenderer.removeAllListeners('audio-status');
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('audio-status', handler);
+    return () => ipcRenderer.removeListener('audio-status', handler);
   },
   onAudioError: (callback) => {
     ipcRenderer.on('audio-error', (_, data) => callback(data));
@@ -49,28 +53,32 @@ contextBridge.exposeInMainWorld('api', {
 
   // Port conflict notifications
   onPortConflict: (callback) => {
-    ipcRenderer.on('port-conflict', (_, data) => callback(data));
-    return () => ipcRenderer.removeAllListeners('port-conflict');
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('port-conflict', handler);
+    return () => ipcRenderer.removeListener('port-conflict', handler);
   },
   onSdpError: (callback) => {
     ipcRenderer.on('sdp-error', (_, data) => callback(data));
     return () => ipcRenderer.removeAllListeners('sdp-error');
   },
   onSdpStatus: (callback) => {
-    ipcRenderer.on('sdp-status', (_, data) => callback(data));
-    return () => ipcRenderer.removeAllListeners('sdp-status');
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('sdp-status', handler);
+    return () => ipcRenderer.removeListener('sdp-status', handler);
   },
 
   // PTP monitoring (network-wide, IEEE 1588 ports 319/320)
   onPtpClocks: (callback) => {
-    ipcRenderer.on('ptp-clocks', (_, data) => callback(data));
-    return () => ipcRenderer.removeAllListeners('ptp-clocks');
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('ptp-clocks', handler);
+    return () => ipcRenderer.removeListener('ptp-clocks', handler);
   },
 
   // Network device list (Dante, RAVENNA, AES67)
   onNetworkDevices: (callback) => {
-    ipcRenderer.on('network-devices', (_, data) => callback(data));
-    return () => ipcRenderer.removeAllListeners('network-devices');
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('network-devices', handler);
+    return () => ipcRenderer.removeListener('network-devices', handler);
   },
 
   // Dante ARC write commands
@@ -82,7 +90,8 @@ contextBridge.exposeInMainWorld('api', {
 
   // mDNS system errors (avahi-browse missing / daemon not running)
   onMdnsError: (callback) => {
-    ipcRenderer.on('mdns-error', (_, data) => callback(data));
-    return () => ipcRenderer.removeAllListeners('mdns-error');
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('mdns-error', handler);
+    return () => ipcRenderer.removeListener('mdns-error', handler);
   },
 });

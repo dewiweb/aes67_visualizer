@@ -932,8 +932,10 @@ function injectDevices(devices) {
     }
   }
 
+  if (injected > 0) {
+    console.log(`[PTP] mDNS inject: +${injected} new (total=${clocks.size})`);
+  }
   if (injected > 0 || updated > 0) {
-    console.log(`[PTP] mDNS inject: +${injected} new, ~${updated} updated (total=${clocks.size})`);
     emitUpdate();
   }
 }
