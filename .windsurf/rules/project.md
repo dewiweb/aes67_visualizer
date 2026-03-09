@@ -99,47 +99,89 @@ No source code was copied. This project remains under MIT License.
 - **URL**: https://github.com/teodly/inferno
 - **License**: GPL-3.0 (protocol reference only — no code included)
 - **Language**: Rust
-- **Scope**: Unofficial Linux Dante protocol implementation (virtual soundcard for ALSA).
+- **Scope**: Unofficial open-source Dante protocol implementation for Linux — virtual ALSA soundcard + audio recorder. 100% reverse-engineered, not affiliated with Audinate.
+- **Legal note**: Dante uses Audinate patents. Inferno makes no claim of approval by Audinate. Distribution of binaries may be restricted where software patents apply.
+- **Architecture** (crates):
+  - `inferno_aoip` — main library: Dante AoIP emulation (TX + RX)
+  - `inferno2pipe` — audio recorder writing interleaved 32-bit PCM to Unix named pipe
+  - `alsa_pcm_inferno` — virtual ALSA soundcard (works with PipeWire, planned: JACK)
+  - `searchfire` — fork of Searchlight mDNS crate, modified for Dante mDNS compatibility
 - **Key learnings — Dante device identity**:
-  - Device ID format: `0000<IP_address_hex>0000` (8 bytes, MAC-style), e.g. for 192.168.1.1 → `0000c0a801010000`
-  - `PROCESS_ID`: integer 0–65535, must be unique per IP when running multiple instances
-  - Alternate ports: `ALT_PORT` to `ALT_PORT+3` (min 4 ports, best to reserve 10)
+  - Device ID = 8 bytes: `0000<IP_address_hex>0000`, e.g. `192.168.1.1` → `0000c0a801010000`
+  - Dante devices use their MAC address padded with `fffe` bytes (EUI-64 style)
+  - `PROCESS_ID`: 0–65535, must be unique per IP (multiple instances on same IP need different IDs)
+  - Alternate port range: `ALT_PORT` to `ALT_PORT+3` (reserve ≥10 ports between instances)
+- **Key learnings — Dante protocol ports** (for firewall config):
+  - UDP `4455` — DBCP flow control
+  - UDP `8700` — device settings (sample rate, encoding, gain)
+  - UDP `4400` — (alternate port observed)
+  - UDP `8800` — CMC clock domain management
+  - UDP `5353` — mDNS
+  - Incoming RTP: port allocated by OS (unknown in advance → open wide range or disable firewall)
 - **Key learnings — PTP**:
-  - Dante native uses **PTPv1** — requires a PTPv1 daemon (Statime fork)
-  - Can switch to **PTPv2** in config → allows Inferno to act as PTP master
-  - AES67 mode on Dante device required for PTPv2 interop between Inferno and Dante
-  - Hardware timestamping: set `CLOCK_PATH=/dev/ptp0`; check NIC support with `ethtool -T`
-  - Disable `chronyd`/`systemd-timesyncd`/`ntpd` for stable PTP
-  - CPU scaling governor can cause jitter — disable with `sysctl -w kernel.perf_cpu_time_max_percent=0`
-- **Key learnings — latency parameters**:
-  - `RX_LATENCY_NS`: receive buffer in ns (default 10ms)
-  - `TX_LATENCY_NS`: transmit latency demand in ns (default 10ms)
-- **Key learnings — mDNS / protocol**:
-  - ARC packet header layout and field offsets
-  - Pagination via result code `0x8112`
-  - Flow creation via port `4455` (DBCP): `start_code=0x1102`
-  - `_netaudio-chan._udp`: per-TX-channel, not present on all hardware
-  - `_netaudio-bund._udp`: multicast bundle flows
-  - Full list: `_netaudio-arc._udp`, `_netaudio-cmc._udp`, `_netaudio-dbc._udp`
-  - Tested with: AVIO AES3, AVIO-DAI2, Brooklyn II/III, Broadway, Orban, Allen&Heath SQ, Soundcraft Vi
-- **Key learnings — other open-source Dante projects** (found via inferno README):
-  - `companion-module-audinate-dantecontroller` (Bitfocus Companion) — routing control
-  - `dante-aes67-relay.js` (philhartung gist) — relay Dante multicast to AES67
-  - `wycliffe` (jsharkey) — earliest public Dante reverse engineering
+  - Dante native = **PTPv1** only; requires the Statime PTPv1 fork (`inferno-dev` branch)
+  - Can switch to **PTPv2** → Inferno becomes PTP master; at least one AES67-enabled Dante device needed for interop
+  - Hardware timestamping: `CLOCK_PATH=/dev/ptp0`; check NIC with `ethtool -T`
+  - NTP/chrony conflict: disable `chronyd` / `systemd-timesyncd` / `ntpd` when running PTP
+  - CPU scaling causes jitter: `sysctl -w kernel.perf_cpu_time_max_percent=0`
+  - `ptp4l` (linuxptp) works for PTPv2 with hardware timestamps
+  - **Inferno2pipe clocked by media flow** — silence not generated when no channel connected (recording pauses)
+- **Key learnings — Linux system integration**:
+  - seccomp / SELinux can block clock syscalls — provide systemd override for PipeWire
+  - PipeWire integration: copy `os_integration/systemd_allow_clock.conf` to PipeWire service override
+  - Tested on: Arch, Ubuntu, Fedora, Raspberry Pi 5/4/Zero2W (ARM 64-bit)
+- **Tested Dante devices**:
+  - AVIO AES3, AVIO-DAI2, AVIO USBC, Ben&Fellows (UltimoX4), Brooklyn II (Klark Teknik DN32-DANTE)
+  - Brooklyn III (Behringer Wing-Rack), Orban Optimod 5750 (Broadway), Soundcraft Vi2000/3000
+  - Allen&Heath SQ-5/6, ESI planet 22c, Dante Via (macOS/Win11), Dante Virtual Soundcard (Win10)
+- **Key learnings — other open-source Dante projects** (from inferno README):
+  - `companion-module-audinate-dantecontroller` (Bitfocus Companion) — routing control via Companion
+  - `dante-aes67-relay.js` (philhartung gist) — relay a Dante multicast stream to AES67
+  - `wycliffe` (jsharkey) — earliest public Dante reverse engineering attempt
+  - `inferno_runners` — scripts for PipeWire bridge + USB audio gadget
 
 ### soundondigital/ravennakit
 - **URL**: https://github.com/soundondigital/ravennakit (SDK at ravennakit.com)
-- **License**: AGPLv3 (protocol/spec reference only — no code included)
+- **License**: AGPLv3 (protocol/spec reference only — no code included). Commercial license available for closed-source products.
 - **Language**: C++
-- **Scope**: Full RAVENNA/AES67/ST2110/PTPv2/NMOS SDK
-- **Key learnings**:
-  - RAVENNA RTSP URL paths: `/by-name/<stream>`, `/by-id/<n>`
-  - RTSP sequence: OPTIONS → DESCRIBE (returns SDP), supports ANNOUNCE method too
-  - RTP default port: `5004` for RAVENNA streams
-  - PTPv2 profiles: AES67 profile (domain 0), SMPTE profile (domain 127)
-  - mDNS DNS-SD: `_ravenna._tcp`, `_ravenna-session._tcp`, `_aes67._udp`
-  - Also supports NMOS IS-04 (discovery) / IS-05 (connection management)
-  - Cross-platform: macOS, Windows, Linux, Android
+- **Scope**: Full software AoIP stack — no special NIC or PTP hardware required. Uses **virtual PTP** implementation (IEEE1588-2019 follower). Ideal for cloud-native / software-only workflows.
+- **Modules included in the SDK**:
+  - **RAVENNA**: full protocol implementation per RAVENNA spec
+  - **AES67**: full AES67-2023 compliance
+  - **ST2110-30**: full SMPTE ST2110-30:2017 support
+  - **NMOS**: IS-04 (discovery) + IS-05 (connection management)
+  - **RTP + RTCP**: transport + control
+  - **DNS-SD**: currently macOS + Windows; Linux planned
+  - **PTPv2**: virtual follower (IEEE1588-2019); hardware timestamping on Linux planned
+  - **RTSP**: client + server for RAVENNA connection management
+  - **SDP**: parsing + generation
+  - **Core utils**: audio buffers, audio formats, containers, streams, lock-free programming, URI, integer wraparound
+- **Key learnings — RAVENNA RTSP**:
+  - RTSP URL paths: `/by-name/<stream>`, `/by-id/<n>`
+  - Both client (DESCRIBE) and server (ANNOUNCE) implemented
+  - RTSP ANNOUNCE: remote device pushes SDP updates to the server
+- **Key learnings — PTPv2 profiles**:
+  - AES67 profile: domain 0 (default)
+  - SMPTE ST2059-2 profile: domain 127
+  - Virtual PTP: no hardware timestamping required — software-only implementation
+- **Key learnings — DNS-SD service types** (confirmed by SDK):
+  - `_ravenna._tcp` — RAVENNA device
+  - `_ravenna-session._tcp` — RAVENNA stream session
+  - `_aes67._udp` — AES67 device
+- **Key learnings — SDP attributes** used by RAVENNA/AES67:
+  - `a=ts-refclk:ptp=IEEE1588-2008:<clock-id>:<domain>` — PTP reference clock
+  - `a=ts-refclk:ptp=IEEE1588-2019:<clock-id>:<domain>` — PTPv2.1 variant
+  - `a=clock-domain:PTPv2 <domain>` — RAVENNA clock domain extension
+  - `a=mediaclk:direct=<offset>` — media clock offset from PTP epoch
+  - `a=recvonly` / `a=sendonly` / `a=sendrecv` — stream direction
+- **Key learnings — demo application**:
+  - JUCE-based demo: https://github.com/soundondigital/ravennakit_juce_demo
+  - Shows how to integrate the SDK with a C++ audio application
+- **What ravennakit confirms for our project**:
+  - RTSP ANNOUNCE is a real part of RAVENNA — worth implementing as receiver
+  - IS-04/IS-05 (NMOS) is the ST2110-30 control path — future feature
+  - DNS-SD Linux support gap confirms why `avahi-browse` workaround was needed
+
 
 ### martim01/pam
 - **URL**: https://github.com/martim01/pam
