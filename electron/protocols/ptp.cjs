@@ -374,9 +374,20 @@ function formatClockId(id) {
   return id;
 }
 
-function getOrCreate(clockIdentity, domainNumber) {
+function getOrCreate(clockIdentity, domainNumber, senderIp) {
   const key = `${clockIdentity}@${domainNumber}`;
   if (!clocks.has(key)) {
+    // If an mDNS placeholder/inject exists for the same IP+domain+version, absorb it
+    let inherited = null;
+    if (senderIp) {
+      for (const [k, c] of clocks) {
+        if (c._fromMdns && c.senderIp === senderIp && c.domainNumber === domainNumber) {
+          inherited = { ...c };
+          clocks.delete(k);
+          break;
+        }
+      }
+    }
     clocks.set(key, {
       clockIdentity,
       domainNumber,
@@ -390,7 +401,10 @@ function getOrCreate(clockIdentity, domainNumber) {
       lastSeen: Date.now(),
       announceCount: 0,
       syncCount: 0,
+      senderIp: senderIp || inherited?.senderIp || null,
     });
+  } else if (senderIp && !clocks.get(key).senderIp) {
+    clocks.get(key).senderIp = senderIp;
   }
   return clocks.get(key);
 }
@@ -432,10 +446,9 @@ function handlePacketV1(buf, header, rinfo) {
     if (!syncInfo) return;
 
     const clockKey = `${clockIdentity}@${domainNumber}`;
-    const clock = getOrCreate(clockIdentity, domainNumber);
+    const clock = getOrCreate(clockIdentity, domainNumber, rinfo?.address);
     clock.lastSeen = Date.now();
     clock.announceCount++;
-    if (rinfo && rinfo.address) clock.senderIp = rinfo.address;
 
     clock.grandmasterIdentity        = syncInfo.grandmasterIdentity;
     clock.grandmasterPriority1       = null;
@@ -454,18 +467,21 @@ function handlePacketV1(buf, header, rinfo) {
     clock.timeTraceable              = false;
     clock.freqTraceable              = false;
     clock.ptpProfile                 = 'Dante (PTPv1)';
-    clock.isGrandmaster              = (clockIdentity === syncInfo.grandmasterIdentity);
-
-    // Mark other clocks in this domain that are no longer grandmaster
-    for (const [key, c] of clocks) {
-      if (c.domainNumber === domainNumber && key !== clockKey) {
-        if (c.isGrandmaster && clock.isGrandmaster) c.isGrandmaster = false;
-      }
-    }
-
-    // PTPv1 BC flag is explicit — override heuristic
+    // A BC is never the true GM — its Sync carries itself as "grandmaster" of its sub-domain
+    // but the grandmasterIsBoundaryClock flag tells us it's a BC relaying upstream time.
     if (syncInfo.grandmasterIsBoundaryClock) {
-      clock.clockRole = 'boundary';
+      clock.isGrandmaster = false;
+      clock.clockRole     = 'boundary';
+    } else {
+      clock.isGrandmaster = (clockIdentity === syncInfo.grandmasterIdentity);
+      // Mark other clocks in this domain that are no longer grandmaster
+      if (clock.isGrandmaster) {
+        for (const [key, c] of clocks) {
+          if (c.domainNumber === domainNumber && key !== clockKey && c.isGrandmaster) {
+            c.isGrandmaster = false;
+          }
+        }
+      }
     }
 
     // Propagate GM info to already-known slaves in this domain that lack it
@@ -484,10 +500,9 @@ function handlePacketV1(buf, header, rinfo) {
     // ── Delay_Req: sent by every slave clock — register it ───────────────────
     // NOTE: in practice Dante slaves send Delay_Req as unicast, not multicast.
     // This branch is kept for completeness but may rarely fire.
-    const clock = getOrCreate(clockIdentity, domainNumber);
+    const clock = getOrCreate(clockIdentity, domainNumber, rinfo?.address);
     clock.lastSeen = Date.now();
-    clock.syncCount++; // reuse syncCount as "activity counter" for slaves
-    if (rinfo && rinfo.address) clock.senderIp = rinfo.address;
+    clock.syncCount++;
     clock.ptpVersion  = clock.ptpVersion  ?? 1;
     clock.ptpProfile  = clock.ptpProfile  ?? 'Dante (PTPv1)';
     clock.isGrandmaster = false;
@@ -524,9 +539,8 @@ function handlePacket(buf, rinfo) {
   const { messageType, clockIdentity, domainNumber, sequenceId } = header;
   const clockKey = `${clockIdentity}@${domainNumber}`;
 
-  const clock = getOrCreate(clockIdentity, domainNumber);
+  const clock = getOrCreate(clockIdentity, domainNumber, rinfo?.address);
   clock.lastSeen = Date.now();
-  if (rinfo && rinfo.address) clock.senderIp = rinfo.address;
 
   switch (messageType) {
     case MSG_ANNOUNCE: {
@@ -650,22 +664,44 @@ function doEmit() {
   lastEmitTime = Date.now();
   pruneClocks();
 
+  // Dedup by senderIp: if two clocks share the same IP (mDNS inject + real PTP packet),
+  // keep the one with actual PTP data. A Dante AES67 GM may appear as both PTPv1 and PTPv2
+  // — that is legitimate and should NOT be deduped (different domainNumber or different role).
+  const seenIp = new Map(); // ip+domain → clock score
+  for (const [key, clock] of clocks) {
+    if (clock._placeholder) continue;
+    if (!clock.senderIp) continue;
+    // Score: real PTP packets score higher than mDNS-only entries
+    const score = (clock.announceCount || 0) + (clock.syncCount || 0);
+    const dedupKey = `${clock.senderIp}@${clock.domainNumber}@v${clock.ptpVersion ?? 0}`;
+    const prev = seenIp.get(dedupKey);
+    if (!prev || score > prev.score) {
+      seenIp.set(dedupKey, { key, score });
+    }
+  }
+  const keepKeys = new Set([...seenIp.values()].map(v => v.key));
+  // Also keep clocks without senderIp (can't dedup them)
+  for (const [key, clock] of clocks) {
+    if (!clock._placeholder && !clock.senderIp) keepKeys.add(key);
+  }
+
   const list = [];
-  for (const [, clock] of clocks) {
-    if (clock._placeholder) continue; // placeholder until MAC is resolved
+  for (const [key, clock] of clocks) {
+    if (clock._placeholder) continue;
+    if (!keepKeys.has(key)) continue; // deduped out
     // Infer clockRole:
-    //   grandmaster: clockIdentity === grandmasterIdentity
-    //   boundary:    explicit flag (PTPv1) OR stepsRemoved > 0 AND syncCount > 0 (PTPv2 heuristic)
-    //   slave:       stepsRemoved > 0 AND syncCount == 0
+    //   grandmaster: isGrandmaster flag set by Sync/Announce parser
+    //   boundary:    explicit PTPv1 flag OR PTPv2 heuristic (stepsRemoved>0 AND syncCount>0)
+    //   slave:       everything else (including mDNS-only, no PTP data yet)
     let clockRole;
     if (clock.isGrandmaster) {
       clockRole = 'grandmaster';
     } else if (clock.clockRole === 'boundary' || clock.grandmasterIsBoundaryClock) {
-      clockRole = 'boundary'; // explicit from PTPv1 grandmasterIsBoundaryClock flag
+      clockRole = 'boundary';
     } else if ((clock.stepsRemoved ?? 0) > 0 && clock.syncCount > 0) {
       clockRole = 'boundary'; // PTPv2 heuristic
     } else {
-      clockRole = 'slave';
+      clockRole = 'slave'; // default: mDNS-only or confirmed slave
     }
 
     list.push({
