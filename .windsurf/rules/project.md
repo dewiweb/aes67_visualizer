@@ -10,18 +10,28 @@ Built with Electron 33 + React 18 + TypeScript + TailwindCSS.
 
 ## Architecture
 - `electron/main.js` — Electron main process, IPC orchestration
-- `electron/preload.cjs` — Context bridge API
+- `electron/preload.cjs` — Context bridge API (`onNetworkDevices`, `onPtpClocks`, ARC commands)
 - `electron/processes/` — Child processes: discovery, sdp, audio, meters, ptp
-- `electron/protocols/` — Protocol implementations: arc, rtsp, mdns, sap, aes67, ravenna
+- `electron/protocols/` — Protocol implementations: arc, rtsp, mdns, sap, aes67, ravenna, ptp
 - `src/components/` — React UI components
 - `src/types/index.ts` — Shared TypeScript types
 
+## Key Types
+- `NetworkDevice` — unified device (Dante + RAVENNA + AES67), keyed by IP. Flags: `isDante`, `isRAVENNA`, `isAES67`, `protocolFamily`. MAC = EUI-64 hex from mDNS TXT `id` field.
+- `Stream` — audio stream from SAP/RTSP/manual SDP. Includes `streamFamily: StreamFamily`.
+- `StreamFamily` — `'dante' | 'dante-aes67' | 'ravenna' | 'ravenna-aes67' | 'aes67'` (detected in `aes67.cjs:detectStreamFamily()`).
+- `PtpClock` — PTP clock observed on network. Includes `senderIp`, `clockRole`, `ptpVersion`, `ptpProfile`.
+
 ## Key Design Decisions
 - Device registry keyed by IP address (not hostname) to avoid duplicates
-- All discovery sources (mDNS, ARC, RTSP, SAP) merge into one device via `upsert()`/`mergeDevice()`
+- All discovery sources (mDNS, ARC, RTSP, SAP) merge into one `NetworkDevice` via `upsert()`/`mergeDevice()`
+- IPC channel `network-devices` sends `NetworkDevice[]` to renderer (was `dante-devices` before v1.3.13)
 - SAP multicast socket binds on `0.0.0.0` on Linux, interface IP on Windows
 - mDNS uses `dns-sd` on Windows/macOS, `avahi-browse` on Linux
 - PTP ports 319/320 require `cap_net_bind_service` on Linux AppImage
+- PTPv1 (Dante) discriminant: `buf[0]=0x01` AND `buf[2]≠0x00` (subdomain field, Dante `_DFLT`=`0x5F`)
+- `StreamFamily` detected from SDP content in `aes67.cjs:validateSdp()` — `k=Dante` field + `ts-refclk` + tool string
+- `PtpPanel` receives `allDevices: NetworkDevice[]` for IP→name and MAC→name resolution
 
 ## Reference Source Repositories
 
