@@ -159,6 +159,49 @@ function lookupServiceDnsSd(name, serviceType, family, onUp) {
   return proc;
 }
 
+/**
+ * Lookup via avahi-browse --resolve --terminate (Linux) — active fallback
+ */
+function lookupServiceAvahi(name, serviceType, family, onUp) {
+  const proc = spawn('avahi-browse', [
+    '--resolve', '--parsable', '--terminate', '--no-db-lookup',
+    serviceType,
+  ]);
+  const timer = setTimeout(() => proc.kill(), 8000);
+  let buffer = '';
+
+  proc.stdout.on('data', (data) => {
+    buffer += data.toString();
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+
+    for (const line of lines) {
+      const parts = line.split(';');
+      if (parts[0] !== '=' || parts[2] !== 'IPv4') continue;
+      if (parts[3] !== name) continue;
+
+      const host    = parts[6];
+      const address = parts[7];
+      const port    = parseInt(parts[8]) || 0;
+      const rawTxt  = parts.slice(9).join(';');
+      const txt     = {};
+      for (const pair of (rawTxt.match(/"([^"]*)"/g) || [])) {
+        const kv = pair.slice(1, -1);
+        const eq = kv.indexOf('=');
+        if (eq > 0) txt[kv.slice(0, eq)] = kv.slice(eq + 1);
+      }
+      clearTimeout(timer);
+      proc.kill();
+      onUp({ name, type: serviceType, host, addresses: address ? [address] : [], port, txt, family });
+      return;
+    }
+  });
+
+  proc.on('close', () => { clearTimeout(timer); });
+  proc.stderr && proc.stderr.on('data', () => {});
+  proc.on('error', () => { clearTimeout(timer); });
+  return proc;
+}
 
 /**
  * Browse using avahi-browse (Linux)
@@ -171,6 +214,10 @@ function lookupServiceDnsSd(name, serviceType, family, onUp) {
 function browseAvahi(callbacks) {
   const { onUp, onDown } = callbacks;
   const browseProcs = [];
+  const lookupProcs = [];
+
+  // Track resolved instances to avoid duplicate onUp calls
+  const resolved = new Set();
 
   console.log('[mDNS] Starting discovery via avahi-browse --resolve (Linux)...');
 
@@ -192,9 +239,11 @@ function browseAvahi(callbacks) {
         const event = parts[0];
 
         if (event === '=') {
-          // Resolved: =;iface;IPv4;name;type;domain;host;ip;port;"txt"...
+          // Resolved inline: =;iface;IPv4;name;type;domain;host;ip;port;"txt"...
           if (parts[2] !== 'IPv4') continue;
           const instanceName = parts[3];
+          const key = `${svc.type}|${instanceName}`;
+          resolved.add(key);
           const host    = parts[6];
           const address = parts[7];
           const port    = parseInt(parts[8]) || 0;
@@ -207,8 +256,26 @@ function browseAvahi(callbacks) {
           }
           onUp({ name: instanceName, type: svc.type, host, addresses: address ? [address] : [], port, txt, family: svc.family });
 
+        } else if (event === '+') {
+          // Announce: =;iface;IPv4;name;type;domain — trigger active lookup as fallback
+          if (parts[2] !== 'IPv4') continue;
+          const instanceName = parts[3];
+          const key = `${svc.type}|${instanceName}`;
+          // Wait 2s for the passive '=' line before launching active lookup
+          setTimeout(() => {
+            if (resolved.has(key)) return;
+            const lp = lookupServiceAvahi(instanceName, svc.type, svc.family, (service) => {
+              if (!resolved.has(key)) {
+                resolved.add(key);
+                onUp(service);
+              }
+            });
+            if (lp) lookupProcs.push(lp);
+          }, 2000);
+
         } else if (event === '-') {
           const instanceName = parts[3];
+          resolved.delete(`${svc.type}|${instanceName}`);
           if (onDown) onDown({ name: instanceName, host: instanceName });
         }
       }
