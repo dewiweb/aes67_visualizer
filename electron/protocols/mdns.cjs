@@ -292,7 +292,7 @@ function browseDnsSd(callbacks) {
         const addMatch = line.match(/\bAdd\s+\d+\s+\d+\s+\S+\s+\S+\.\s+(.+)$/);
         if (addMatch) {
           const name = addMatch[1].trim().replace(/\\ /g, ' ');
-          const lp = lookupService(name, svc.type, svc.family, onUp);
+          const lp = lookupServiceDnsSd(name, svc.type, svc.family, onUp);
           if (lp) lookupProcs.push(lp);
         } else {
           const rmvMatch = line.match(/\bRmv\s+\d+\s+\d+\s+\S+\s+\S+\.\s+(.+)$/);
