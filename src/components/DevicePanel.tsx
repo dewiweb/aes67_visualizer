@@ -246,16 +246,26 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t, onStream
 
                 {/* Row 3: TX/RX counts + sample rate + stream channel count + fw */}
                 <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5 flex-wrap">
-                  {dd?.txChannels != null && (
-                    <span className="flex items-center gap-1 text-emerald-400">
-                      <ArrowUpFromLine size={10} />{dd.txChannels} TX
-                    </span>
-                  )}
-                  {dd?.rxChannels != null && (
-                    <span className="flex items-center gap-1 text-sky-400">
-                      <ArrowDownToLine size={10} />{dd.rxChannels} RX
-                    </span>
-                  )}
+                  {dd?.txChannels != null && (() => {
+                    const named = dd.txChannelNames?.length ?? 0;
+                    const cap   = dd.txChannels;
+                    const label = named > 0 && named !== cap ? `${named}/${cap}` : `${cap}`;
+                    return (
+                      <span className="flex items-center gap-1 text-emerald-400" title={named > 0 && named !== cap ? `${named} named, ${cap} total capacity` : undefined}>
+                        <ArrowUpFromLine size={10} />{label} TX
+                      </span>
+                    );
+                  })()}
+                  {dd?.rxChannels != null && (() => {
+                    const named = dd.rxChannelNames?.length ?? 0;
+                    const cap   = dd.rxChannels;
+                    const label = named > 0 && named !== cap ? `${named}/${cap}` : `${cap}`;
+                    return (
+                      <span className="flex items-center gap-1 text-sky-400" title={named > 0 && named !== cap ? `${named} named, ${cap} total capacity` : undefined}>
+                        <ArrowDownToLine size={10} />{label} RX
+                      </span>
+                    );
+                  })()}
                   {dd?.sampleRate && <span>{dd.sampleRate / 1000}kHz</span>}
                   {totalCh > 0 && (
                     <span className="flex items-center gap-1">
@@ -299,11 +309,15 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t, onStream
                 {(dd?.txChannelNames?.length ?? 0) > 0 && (() => {
                   const txWithStreams = dd!.txChannelNames.map((ch, idx) => {
                     const chName = ch.name || `ch${ch.id}`;
-                    const sapStream = devStreams.find(s =>
-                      s.name === chName ||
-                      s.name === `${chName}@${dd?.name || ip}` ||
-                      s.name?.startsWith(chName + ' ')
-                    );
+                    // Dante AES67 SAP names: "CH1@EIKOS4K" or "CH1" — strip @device suffix for matching
+                    const sapStream = devStreams.find(s => {
+                      if (!s.name) return false;
+                      const sName = s.name.replace(/@.+$/, '').trim();
+                      return sName === chName ||
+                             s.name === chName ||
+                             s.name === `${chName}@${dd?.name || ip}` ||
+                             sName.startsWith(chName + ' ');
+                    });
                     return { ch, chName, sapStream, idx };
                   });
                   const hasSap = txWithStreams.some(x => x.sapStream);
