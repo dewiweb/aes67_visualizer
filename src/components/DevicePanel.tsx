@@ -290,39 +290,52 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t, onStream
                 )}
 
                 {/* TX channel names — enriched with SAP stream info when available */}
-                {(dd?.txChannelNames?.length ?? 0) > 0 && (
-                  <div className="px-3 py-2 border-t border-slate-700/40">
-                    <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-medium mb-1.5">
-                      <ArrowUpFromLine size={10} /> TX Channels
+                {(dd?.txChannelNames?.length ?? 0) > 0 && (() => {
+                  const txWithStreams = dd!.txChannelNames.map(ch => {
+                    const chName = ch.name || `ch${ch.id}`;
+                    const sapStream = devStreams.find(s =>
+                      s.name === chName ||
+                      s.name === `${chName}@${dd?.name || ip}` ||
+                      s.name?.startsWith(chName + ' ')
+                    );
+                    return { ch, chName, sapStream };
+                  });
+                  const hasSap = txWithStreams.some(x => x.sapStream);
+                  return (
+                    <div className="px-3 py-2 border-t border-slate-700/40">
+                      <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-medium mb-1.5">
+                        <ArrowUpFromLine size={10} /> TX Channels
+                      </div>
+                      {hasSap ? (
+                        <div className="space-y-0.5">
+                          {txWithStreams.map(({ ch, chName, sapStream }) => (
+                            <div key={`tx-${ch.id}`} className="flex items-center gap-1.5 text-[10px]">
+                              <span className="text-slate-600 w-5 text-right shrink-0">{ch.id}</span>
+                              <span className="text-slate-300 truncate flex-1">{chName}</span>
+                              {sapStream && (
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <span className="text-slate-500 font-mono">{sapStream.mcast}:{sapStream.port}</span>
+                                  <span className="bg-slate-700 px-1 py-0.5 rounded text-slate-400">{sapStream.codec}</span>
+                                  <span className="bg-slate-700 px-1 py-0.5 rounded text-slate-400">{sapStream.channels}ch</span>
+                                  {sapStream.ptime && <span className="text-slate-600">{sapStream.ptime}ms</span>}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+                          {txWithStreams.map(({ ch, chName }) => (
+                            <div key={`tx-${ch.id}`} className="flex items-center gap-1.5 text-[10px] text-slate-300">
+                              <span className="text-slate-600 w-5 text-right shrink-0">{ch.id}</span>
+                              <span className="truncate">{chName}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <div className="space-y-0.5">
-                      {dd!.txChannelNames.map(ch => {
-                        const chName = ch.name || `ch${ch.id}`;
-                        const sapStream = devStreams.find(s =>
-                          s.name === chName ||
-                          s.name === `${chName}@${dd?.name || ip}` ||
-                          s.name?.startsWith(chName + ' ')
-                        );
-                        return (
-                          <div key={`tx-${ch.id}`} className="flex items-center gap-1.5 text-[10px]">
-                            <span className="text-slate-600 w-5 text-right shrink-0">{ch.id}</span>
-                            <span className="text-slate-300 truncate flex-1">{chName}</span>
-                            {sapStream ? (
-                              <div className="flex items-center gap-1 shrink-0">
-                                <span className="text-slate-500 font-mono">{sapStream.mcast}:{sapStream.port}</span>
-                                <span className="bg-slate-700 px-1 py-0.5 rounded text-slate-400">{sapStream.codec}</span>
-                                <span className="bg-slate-700 px-1 py-0.5 rounded text-slate-400">{sapStream.channels}ch</span>
-                                {sapStream.ptime && <span className="text-slate-600">{sapStream.ptime}ms</span>}
-                              </div>
-                            ) : (
-                              <span className="text-slate-700 shrink-0">—</span>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {/* RX channel names + routing */}
                 {(dd?.rxChannelNames?.length ?? 0) > 0 && (
