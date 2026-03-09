@@ -1,3 +1,7 @@
+---
+trigger: always_on
+---
+
 # AES67 Visualizer — Windsurf Project Rules
 
 ## Project Overview
