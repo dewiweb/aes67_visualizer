@@ -75,6 +75,10 @@ contextBridge.exposeInMainWorld('api', {
 
   // Dante ARC write commands
   arcSetDeviceName: (ip, port, name) => ipcRenderer.invoke('arc-set-device-name', { ip, port, name }),
+  arcSetSubscription: (ip, port, rxChannelId, txChannelName, txDeviceName) =>
+    ipcRenderer.invoke('arc-set-subscription', { ip, port, rxChannelId, txChannelName, txDeviceName }),
+  arcUnsubscribeRx: (ip, port, rxChannelId) =>
+    ipcRenderer.invoke('arc-unsubscribe-rx', { ip, port, rxChannelId }),
 
   // mDNS system errors (avahi-browse missing / daemon not running)
   onMdnsError: (callback) => {

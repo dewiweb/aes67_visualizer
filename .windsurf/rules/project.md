@@ -338,11 +338,31 @@ UI: `PermissionsPanel` (NavRail: shield icon) displays active conflicts + per-OS
 | Opcode | Description | Status |
 |--------|-------------|--------|
 | `0x1000` | Channel count (TX + RX) | ✅ implemented |
-| `0x1002` | Device name | ✅ implemented |
+| `0x1001` | Set device name | ✅ implemented |
+| `0x1002` | Device name (read) | ✅ implemented |
 | `0x1003` | Device info | ✅ implemented |
 | `0x2000` | TX channel list (paginated) | ✅ implemented |
 | `0x2010` | TX channel friendly names | ✅ implemented |
 | `0x3000` | RX channel list + subscription status | ✅ implemented |
-| `0x3010` | Set channel subscriptions (routing) | ❌ not yet |
+| `0x3010` | Set RX subscription (routing write) | ✅ implemented — `setSubscription(ip, port, rxChannelId, txChannelName, txDeviceName)` |
 | `0x2201` | Create multicast TX flow | ❌ not yet |
 | `0x3200` | Query RX flows | ❌ not yet |
+
+### Routing Matrix — UI
+- **DevicePanel** RX channels: hover → `Link` icon → TX picker dropdown (all TX channels from other Dante devices)
+- Unsubscribe: hover → `Unlink` icon on subscribed channels
+- Feedback: channel name flashes green (ok) / red (err) for 3s
+- IPC: `arc-set-subscription` / `arc-unsubscribe-rx` → `arc.setSubscription()` / `arc.unsubscribeRx()`
+
+### RAVENNA Routing — Alternative Analysis
+RAVENNA has no equivalent to ARC's `0x3010` subscription command. Options:
+
+| Method | Protocol | Feasibility |
+|--------|----------|-------------|
+| RTSP `SETUP` + `PLAY` | RTSP RFC 2326 | Possible but creates a full media session, not just a subscription |
+| SAP/SDP ANNOUNCE | RFC 2974 | TX-side only — no RX subscription mechanism |
+| HTTP REST | Vendor-specific | Non-standardized, device-dependent |
+| Netlink/ioctl | Linux kernel | Merging Tech driver only, out of scope |
+
+**Decision**: RAVENNA routing not implemented. RAVENNA devices can be subscribed to Dante TX sources
+via Dante Controller (which uses ARC). For RAVENNA-to-RAVENNA routing, the device's own web UI must be used.

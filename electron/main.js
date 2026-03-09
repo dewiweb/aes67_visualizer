@@ -443,6 +443,28 @@ function setupIpcHandlers() {
       return { ok: false, error: e.message };
     }
   });
+
+  // Dante ARC routing: subscribe RX channel to a TX source
+  ipcMain.handle('arc-set-subscription', async (event, { ip, port, rxChannelId, txChannelName, txDeviceName }) => {
+    try {
+      const ok = await arc.setSubscription(ip, port || arc.DEFAULT_PORT, rxChannelId, txChannelName, txDeviceName);
+      if (ok && danteProcess) danteProcess.send({ type: 'refresh' });
+      return { ok };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  // Dante ARC routing: unsubscribe RX channel
+  ipcMain.handle('arc-unsubscribe-rx', async (event, { ip, port, rxChannelId }) => {
+    try {
+      const ok = await arc.unsubscribeRx(ip, port || arc.DEFAULT_PORT, rxChannelId);
+      if (ok && danteProcess) danteProcess.send({ type: 'refresh' });
+      return { ok };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
 }
 
 app.whenReady().then(() => {

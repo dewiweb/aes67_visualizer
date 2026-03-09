@@ -1,6 +1,13 @@
 import React, { useMemo, useState, useRef } from 'react';
 import { Stream, DanteDevice } from '../types';
-import { Server, Clock, Layers, ChevronDown, ChevronRight, AlertCircle, ArrowUpFromLine, ArrowDownToLine, Pencil, Check, X } from 'lucide-react';
+import { Server, Clock, Layers, ChevronDown, ChevronRight, AlertCircle, ArrowUpFromLine, ArrowDownToLine, Pencil, Check, X, Link, Unlink } from 'lucide-react';
+
+/** Routing picker state: which (rxDeviceIp, rxChannelId) is being routed */
+interface RoutingTarget {
+  rxIp: string;
+  rxChannelId: number;
+  rxChannelName: string;
+}
 
 interface DevicePanelProps {
   streams: Stream[];
@@ -52,10 +59,42 @@ function buildUnifiedList(danteDevices: DanteDevice[], streams: Stream[]): Unifi
 
 const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onStreamClick }) => {
   const [expanded, setExpanded]   = React.useState<Set<string>>(new Set());
-  const [renaming, setRenaming]   = useState<string | null>(null); // IP being renamed
+  const [renaming, setRenaming]   = useState<string | null>(null);
   const [renameVal, setRenameVal] = useState('');
   const [renameStatus, setRenameStatus] = useState<Record<string, 'ok' | 'err' | null>>({});
   const renameInputRef = useRef<HTMLInputElement>(null);
+
+  // Routing state: key = `${rxIp}:${rxChannelId}`
+  const [routingTarget, setRoutingTarget] = useState<RoutingTarget | null>(null);
+  const [routeStatus, setRouteStatus] = useState<Record<string, 'ok' | 'err' | null>>({});
+
+  const routeKey = (ip: string, chId: number) => `${ip}:${chId}`;
+
+  const startRoute = (e: React.MouseEvent, rxIp: string, rxChannelId: number, rxChannelName: string) => {
+    e.stopPropagation();
+    setRoutingTarget(prev =>
+      prev?.rxIp === rxIp && prev?.rxChannelId === rxChannelId ? null : { rxIp, rxChannelId, rxChannelName }
+    );
+  };
+
+  const applyRoute = async (txDeviceName: string, txChannelName: string) => {
+    if (!routingTarget || !window.api?.arcSetSubscription) return;
+    const { rxIp, rxChannelId } = routingTarget;
+    const key = routeKey(rxIp, rxChannelId);
+    setRoutingTarget(null);
+    const { ok } = await window.api.arcSetSubscription(rxIp, null, rxChannelId, txChannelName, txDeviceName);
+    setRouteStatus(prev => ({ ...prev, [key]: ok ? 'ok' : 'err' }));
+    setTimeout(() => setRouteStatus(prev => ({ ...prev, [key]: null })), 3000);
+  };
+
+  const removeRoute = async (e: React.MouseEvent, rxIp: string, rxChannelId: number) => {
+    e.stopPropagation();
+    if (!window.api?.arcUnsubscribeRx) return;
+    const key = routeKey(rxIp, rxChannelId);
+    const { ok } = await window.api.arcUnsubscribeRx(rxIp, null, rxChannelId);
+    setRouteStatus(prev => ({ ...prev, [key]: ok ? 'ok' : 'err' }));
+    setTimeout(() => setRouteStatus(prev => ({ ...prev, [key]: null })), 3000);
+  };
 
   const toggle = (ip: string) => {
     setExpanded(prev => {
@@ -264,32 +303,98 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onS
                   </div>
                 )}
 
-                {/* RX channel names */}
+                {/* RX channel names + routing */}
                 {(dd?.rxChannelNames?.length ?? 0) > 0 && (
                   <div className="px-3 py-2 border-t border-slate-700/40">
                     <div className="flex items-center gap-1.5 text-[10px] text-sky-400 font-medium mb-1.5">
                       <ArrowDownToLine size={10} /> RX Channels
                     </div>
-                    <div className="space-y-0.5">
+                    <div className="space-y-1">
                       {dd!.rxChannelNames.map(ch => {
                         const statusColor =
                           ch.statusText === 'Subscribed'   ? 'text-emerald-400' :
                           ch.statusText === 'Dangling'     ? 'text-amber-400'   :
                           ch.statusText === 'Unresolved'   ? 'text-red-400'     :
                           'text-slate-600';
+                        const key = routeKey(ip, ch.id);
+                        const isPickerOpen = routingTarget?.rxIp === ip && routingTarget?.rxChannelId === ch.id;
+                        const rStatus = routeStatus[key];
+
+                        // Collect all TX sources from other Dante devices
+                        const txSources = danteDevices
+                          .filter(d => d.ip !== ip && (d.txChannelNames?.length ?? 0) > 0)
+                          .flatMap(d => d.txChannelNames!.map(tx => ({
+                            deviceName: d.name || d.ip,
+                            deviceIp: d.ip,
+                            channelId: tx.id,
+                            channelName: tx.name || `ch${tx.id}`,
+                          })));
+
                         return (
-                          <div key={ch.id} className="flex items-center gap-1.5 text-[10px]">
-                            <span className="text-slate-600 w-5 text-right shrink-0">{ch.id}</span>
-                            <span className="text-slate-300 truncate flex-1">{ch.name || `ch${ch.id}`}</span>
-                            {ch.txHost && (
-                              <span className="text-slate-500 truncate max-w-[80px]">
-                                ← {ch.txHost.replace(/\.local\.?$/, '')}
-                                {ch.txChannelName ? `/${ch.txChannelName}` : ''}
+                          <div key={ch.id}>
+                            {/* Channel row */}
+                            <div className="flex items-center gap-1 text-[10px] group">
+                              <span className="text-slate-600 w-5 text-right shrink-0">{ch.id}</span>
+                              <span className={`text-slate-300 truncate flex-1 ${rStatus === 'ok' ? 'text-emerald-400' : rStatus === 'err' ? 'text-red-400' : ''}`}>
+                                {ch.name || `ch${ch.id}`}
                               </span>
+                              {ch.txHost && (
+                                <span className="text-slate-500 truncate max-w-[70px]">
+                                  ← {ch.txHost.replace(/\.local\.?$/, '')}
+                                  {ch.txChannelName ? `/${ch.txChannelName}` : ''}
+                                </span>
+                              )}
+                              <span className={`shrink-0 font-medium ${statusColor}`}>
+                                {ch.statusText || (ch.subscribed ? 'Sub' : '—')}
+                              </span>
+                              {/* Route button */}
+                              {dd?.isDante && txSources.length > 0 && (
+                                <button
+                                  onClick={e => startRoute(e, ip, ch.id, ch.name || `ch${ch.id}`)}
+                                  className={`shrink-0 p-0.5 transition-colors ${
+                                    isPickerOpen
+                                      ? 'text-sky-400'
+                                      : 'opacity-0 group-hover:opacity-100 text-slate-500 hover:text-sky-400'
+                                  }`}
+                                  title="Route this RX channel"
+                                >
+                                  <Link size={9} />
+                                </button>
+                              )}
+                              {/* Unsubscribe button (only if subscribed) */}
+                              {dd?.isDante && ch.subscribed && (
+                                <button
+                                  onClick={e => removeRoute(e, ip, ch.id)}
+                                  className="shrink-0 p-0.5 opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 transition-colors"
+                                  title="Unsubscribe"
+                                >
+                                  <Unlink size={9} />
+                                </button>
+                              )}
+                            </div>
+
+                            {/* TX picker dropdown */}
+                            {isPickerOpen && (
+                              <div className="mt-1 ml-6 rounded border border-sky-700/50 bg-slate-900 shadow-lg text-[10px] max-h-40 overflow-y-auto z-10">
+                                <div className="px-2 py-1 text-sky-400 border-b border-sky-700/30 font-medium">
+                                  Route "{routingTarget?.rxChannelName}" ←
+                                </div>
+                                {txSources.map((src, i) => (
+                                  <button
+                                    key={i}
+                                    onClick={() => applyRoute(src.deviceName, src.channelName)}
+                                    className="w-full text-left px-2 py-1 hover:bg-sky-900/40 text-slate-300 flex items-center gap-1.5"
+                                  >
+                                    <ArrowUpFromLine size={8} className="text-emerald-400 shrink-0" />
+                                    <span className="truncate">{src.channelName}</span>
+                                    <span className="text-slate-500 truncate">@ {src.deviceName}</span>
+                                  </button>
+                                ))}
+                                {txSources.length === 0 && (
+                                  <div className="px-2 py-1.5 text-slate-600">No TX sources available</div>
+                                )}
+                              </div>
                             )}
-                            <span className={`shrink-0 font-medium ${statusColor}`}>
-                              {ch.statusText || (ch.subscribed ? 'Subscribed' : 'Unsubscribed')}
-                            </span>
                           </div>
                         );
                       })}

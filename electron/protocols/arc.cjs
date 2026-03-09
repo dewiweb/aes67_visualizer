@@ -16,6 +16,7 @@ const OPCODE_DEVICE_INFO   = 0x1003; // board_name, revision, friendly_hostname 
 const OPCODE_TX_CHANNELS   = 0x2000; // TX channel list: channel_id(2) + unknown(2) + common_offset(2) + name_offset(2)
 const OPCODE_TX_CHAN_NAMES  = 0x2010; // TX channel friendly names
 const OPCODE_RX_CHANNELS   = 0x3000; // RX channel list + subscription status
+const OPCODE_SET_SUBSCRIBE = 0x3010; // Set RX subscription (routing)
 const RESULT_SUCCESS       = 0x0001;
 const RESULT_SUCCESS_EXT   = 0x8112; // more pages available (paginated response)
 
@@ -249,6 +250,57 @@ async function getRxChannels(ip, port = DEFAULT_PORT, rxCount = 0, timeout = DEF
 const OPCODE_SET_DEVICE_NAME = 0x1001;
 
 /**
+ * Subscribe an RX channel to a TX channel on a remote Dante device.
+ *
+ * Payload layout (from network-audio-controller / netaudio_lib):
+ *   rxChannelId(2) + flags(2) + "txChannelName\0" + "@" + "txDeviceName\0"
+ *
+ * @param {string} ip           — IP of the receiver device
+ * @param {number} port         — ARC port (default 4440)
+ * @param {number} rxChannelId  — RX channel index (1-based as returned by getRxChannels)
+ * @param {string} txChannelName — TX channel name on the source device
+ * @param {string} txDeviceName  — Name of the source device
+ * @returns {boolean} true if acknowledged
+ */
+async function setSubscription(ip, port = DEFAULT_PORT, rxChannelId, txChannelName, txDeviceName) {
+  // "txChannelName@txDeviceName" encoded as ASCII with null terminators
+  const chanBytes   = Buffer.from(txChannelName + '\0', 'ascii');
+  const deviceBytes = Buffer.from(txDeviceName  + '\0', 'ascii');
+  // separator '@'
+  const sep = Buffer.from('@');
+
+  const header = Buffer.alloc(4);
+  header.writeUInt16BE(rxChannelId, 0);
+  header.writeUInt16BE(0x0000,      2); // flags = 0
+
+  const payload = Buffer.concat([header, chanBytes, sep, deviceBytes]);
+  const raw = await sendRequest(ip, port, buildRequest(OPCODE_SET_SUBSCRIBE, payload));
+  if (!raw || raw.length < 10) return false;
+  const rc = raw.readUInt16BE(8);
+  return rc === RESULT_SUCCESS;
+}
+
+/**
+ * Unsubscribe an RX channel (remove routing).
+ *
+ * Payload: rxChannelId(2) + 0x00 0x00 (empty subscription)
+ *
+ * @param {string} ip
+ * @param {number} port
+ * @param {number} rxChannelId
+ * @returns {boolean}
+ */
+async function unsubscribeRx(ip, port = DEFAULT_PORT, rxChannelId) {
+  const payload = Buffer.alloc(4);
+  payload.writeUInt16BE(rxChannelId, 0);
+  payload.writeUInt16BE(0x0000,      2);
+  const raw = await sendRequest(ip, port, buildRequest(OPCODE_SET_SUBSCRIBE, payload));
+  if (!raw || raw.length < 10) return false;
+  const rc = raw.readUInt16BE(8);
+  return rc === RESULT_SUCCESS;
+}
+
+/**
  * Set or reset the Dante device name via ARC.
  * @param {string} ip
  * @param {number} port
@@ -272,4 +324,4 @@ async function setDeviceName(ip, port = DEFAULT_PORT, name = null) {
   return rc === RESULT_SUCCESS;
 }
 
-module.exports = { query, getTxChannels, getRxChannels, setDeviceName, DEFAULT_PORT };
+module.exports = { query, getTxChannels, getRxChannels, setDeviceName, setSubscription, unsubscribeRx, DEFAULT_PORT };
