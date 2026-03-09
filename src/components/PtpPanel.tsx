@@ -68,20 +68,34 @@ function buildMacMap(devices: DanteDevice[]): Map<string, string> {
 const ClockCard: React.FC<{ clock: PtpClock; macMap: Map<string, string> }> = ({ clock, macMap }) => {
   const [expanded, setExpanded] = useState(false);
 
-  const borderColor = clock.isGrandmaster
+  const borderColor = clock.clockRole === 'grandmaster'
     ? 'border-amber-500'
+    : clock.clockRole === 'boundary'
+    ? 'border-purple-500'
     : clock.stepsRemoved === 1
     ? 'border-blue-500'
     : 'border-slate-600';
 
-  const roleLabel = clock.isGrandmaster
-    ? '★ Grandmaster'
+  const roleLabel = clock.clockRole === 'grandmaster'
+    ? '★ GM'
+    : clock.clockRole === 'boundary'
+    ? '⇄ BC'
     : clock.stepsRemoved != null
-    ? `Slave (${clock.stepsRemoved} hop${clock.stepsRemoved > 1 ? 's' : ''})`
+    ? `Slave (${clock.stepsRemoved})`
     : 'Clock';
 
-  const roleBadgeColor = clock.isGrandmaster
+  const roleLabelFull = clock.clockRole === 'grandmaster'
+    ? 'Grandmaster'
+    : clock.clockRole === 'boundary'
+    ? 'Boundary Clock'
+    : clock.stepsRemoved != null
+    ? `Slave — ${clock.stepsRemoved} hop${clock.stepsRemoved > 1 ? 's' : ''} from GM`
+    : 'Clock';
+
+  const roleBadgeColor = clock.clockRole === 'grandmaster'
     ? 'bg-amber-600 text-amber-100'
+    : clock.clockRole === 'boundary'
+    ? 'bg-purple-700 text-purple-100'
     : 'bg-blue-700 text-blue-100';
 
   return (
@@ -91,7 +105,7 @@ const ClockCard: React.FC<{ clock: PtpClock; macMap: Map<string, string> }> = ({
         onClick={() => setExpanded(e => !e)}
       >
         <div className="flex items-center gap-2 min-w-0">
-          <span className={`text-xs px-1.5 py-0.5 rounded font-medium shrink-0 ${roleBadgeColor}`}>
+          <span className={`text-xs px-1.5 py-0.5 rounded font-medium shrink-0 ${roleBadgeColor}`} title={roleLabelFull}>
             {roleLabel}
           </span>
           <div className="flex flex-col min-w-0">
@@ -110,6 +124,14 @@ const ClockCard: React.FC<{ clock: PtpClock; macMap: Map<string, string> }> = ({
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0 ml-2">
+          {clock.ptpVersion && (
+            <span className="text-[10px] text-slate-500 font-mono">v{clock.ptpVersion}</span>
+          )}
+          {clock.ptpProfile && (
+            <span className="text-[10px] text-slate-500 truncate max-w-[80px]" title={clock.ptpProfile}>
+              {clock.ptpProfile.split(' ')[0]}
+            </span>
+          )}
           <span className="text-xs text-slate-500">D{clock.domainNumber}</span>
           <span className="text-slate-500 text-xs">{expanded ? '▲' : '▼'}</span>
         </div>
@@ -118,6 +140,13 @@ const ClockCard: React.FC<{ clock: PtpClock; macMap: Map<string, string> }> = ({
       {expanded && (
         <div className="px-3 py-2 bg-slate-850 border-t border-slate-700 space-y-0.5">
           <Row label="Clock ID"         value={clock.clockIdentity} />
+          <Row label="Role"             value={roleLabelFull} />
+          {clock.ptpVersion != null && (
+            <Row label="PTP Version"    value={`IEEE 1588-${clock.ptpVersion === 1 ? '2002' : '2008/2019'} (v${clock.ptpVersion})`} />
+          )}
+          {clock.ptpProfile && (
+            <Row label="Profile"        value={clock.ptpProfile} />
+          )}
           {clock.grandmasterDisplayId && !clock.isGrandmaster && (() => {
             const gmMac = clock.grandmasterIdentity ? clockIdentityToMac(clock.grandmasterIdentity) : null;
             const gmName = gmMac ? macMap.get(gmMac) : undefined;
@@ -141,6 +170,15 @@ const ClockCard: React.FC<{ clock: PtpClock; macMap: Map<string, string> }> = ({
           <div className="border-t border-slate-700 mt-1 pt-1">
             <Row label="Sync interval"     value={logIntervalLabel(clock.logSyncInterval)} />
             <Row label="Announce interval" value={logIntervalLabel(clock.logAnnounceInterval)} />
+            {clock.ptpTimescale != null && (
+              <Row label="PTP Timescale"   value={clock.ptpTimescale ? 'Yes (TAI)' : 'No (ARB)'} />
+            )}
+            {clock.timeTraceable != null && (
+              <Row label="Time traceable"  value={clock.timeTraceable  ? '✓ Yes' : '✗ No'} />
+            )}
+            {clock.freqTraceable != null && (
+              <Row label="Freq traceable"  value={clock.freqTraceable  ? '✓ Yes' : '✗ No'} />
+            )}
           </div>
 
           {clock.offsetSamples > 0 && (

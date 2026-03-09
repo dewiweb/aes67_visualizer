@@ -107,11 +107,19 @@ export interface StreamPtpStatuses {
   [streamId: string]: PtpStatus | null;
 }
 
+export type PtpClockRole = 'grandmaster' | 'boundary' | 'slave';
+
 export interface PtpClock {
   clockIdentity: string;
   displayId: string;
   domainNumber: number;
   isGrandmaster: boolean;
+  clockRole: PtpClockRole | null;
+  ptpVersion: number | null;
+  ptpProfile: string | null;
+  ptpTimescale: boolean | null;
+  timeTraceable: boolean | null;
+  freqTraceable: boolean | null;
   grandmasterIdentity: string | null;
   grandmasterDisplayId: string | null;
   priority1: number | null;

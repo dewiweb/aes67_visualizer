@@ -106,7 +106,7 @@ function parseHeader(buf) {
   const byte1       = buf.readUInt8(1);
   const version     = byte1 & 0x0f;
 
-  if (version !== 2) return null; // Only PTPv2
+  if (version < 1 || version > 2) return null; // PTPv1 or PTPv2
 
   const messageLength = buf.readUInt16BE(2);
   const domainNumber  = buf.readUInt8(4);
@@ -140,6 +140,23 @@ function parseHeader(buf) {
     timeTraceable, freqTraceable,
     messageName: MSG_NAMES[messageType] || `0x${messageType.toString(16)}`,
   };
+}
+
+/**
+ * Deduce a PTP profile label from clock class and time source.
+ * References:
+ *   AES67-2018 §9.1: clockClass=248, timeSource=INTERNAL_OSCILLATOR(0xa0) or PTP(0x40)
+ *   RAVENNA: clockClass=135 (slave-only) or 248
+ *   Dante: clockClass=135 (slave port) or 248 (master)
+ *   SMPTE ST 2059: clockClass=7-13, timeSource=GNSS(0x20)
+ */
+function detectProfile(clockClass, timeSourceCode) {
+  if (timeSourceCode === 0x20 || timeSourceCode === 0x10) return 'SMPTE ST2059 (GNSS/Atomic)';
+  if (clockClass === 248 && timeSourceCode === 0xa0) return 'AES67';
+  if (clockClass === 135) return 'Dante/RAVENNA (slave-only)';
+  if (clockClass >= 1 && clockClass <= 13) return 'Primary reference (GNSS)';
+  if (clockClass === 248) return 'AES67/RAVENNA';
+  return null;
 }
 
 /**
@@ -222,6 +239,12 @@ function getOrCreate(clockIdentity, domainNumber) {
       clockIdentity,
       domainNumber,
       isGrandmaster: false,
+      ptpVersion: null,
+      ptpProfile: null,
+      clockRole: null,
+      ptpTimescale: null,
+      timeTraceable: null,
+      freqTraceable: null,
       lastSeen: Date.now(),
       announceCount: 0,
       syncCount: 0,
@@ -279,9 +302,15 @@ function handlePacket(buf, rinfo) {
       clock.offsetScaledLogVariance = announce.offsetScaledLogVariance;
       clock.stepsRemoved           = announce.stepsRemoved;
       clock.timeSource             = announce.timeSource;
+      clock.timeSourceCode         = announce.timeSourceCode;
       clock.currentUtcOffset       = announce.currentUtcOffset;
       clock.logAnnounceInterval    = announce.logMessageInterval;
       clock.domainNumber           = domainNumber;
+      clock.ptpVersion             = announce.version;
+      clock.ptpTimescale           = announce.ptpTimescale;
+      clock.timeTraceable          = announce.timeTraceable;
+      clock.freqTraceable          = announce.freqTraceable;
+      clock.ptpProfile             = detectProfile(announce.clockClass, announce.timeSourceCode);
 
       // A clock is grandmaster if its clockIdentity == grandmasterIdentity
       clock.isGrandmaster = (clockIdentity === announce.grandmasterIdentity);
@@ -372,11 +401,31 @@ function emitUpdate() {
         clocks.delete(key);
         continue;
       }
+      // Infer clockRole:
+      //   grandmaster: clockIdentity === grandmasterIdentity
+      //   boundary:    stepsRemoved > 0 AND this clock also emits Sync (syncCount > 0)
+      //                i.e. it is both a slave (has a master) and a master (sends Sync)
+      //   slave:       stepsRemoved > 0 AND syncCount == 0
+      let clockRole;
+      if (clock.isGrandmaster) {
+        clockRole = 'grandmaster';
+      } else if ((clock.stepsRemoved ?? 0) > 0 && clock.syncCount > 0) {
+        clockRole = 'boundary';
+      } else {
+        clockRole = 'slave';
+      }
+
       list.push({
         clockIdentity:        clock.clockIdentity,
         displayId:            formatClockId(clock.clockIdentity),
         domainNumber:         clock.domainNumber,
         isGrandmaster:        clock.isGrandmaster,
+        clockRole,
+        ptpVersion:           clock.ptpVersion ?? null,
+        ptpProfile:           clock.ptpProfile  || null,
+        ptpTimescale:         clock.ptpTimescale ?? null,
+        timeTraceable:        clock.timeTraceable ?? null,
+        freqTraceable:        clock.freqTraceable ?? null,
         grandmasterIdentity:  clock.grandmasterIdentity || null,
         grandmasterDisplayId: clock.grandmasterIdentity ? formatClockId(clock.grandmasterIdentity) : null,
         priority1:            clock.grandmasterPriority1 ?? null,
