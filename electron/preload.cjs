@@ -75,4 +75,10 @@ contextBridge.exposeInMainWorld('api', {
 
   // Dante ARC write commands
   arcSetDeviceName: (ip, port, name) => ipcRenderer.invoke('arc-set-device-name', { ip, port, name }),
+
+  // mDNS system errors (avahi-browse missing / daemon not running)
+  onMdnsError: (callback) => {
+    ipcRenderer.on('mdns-error', (_, data) => callback(data));
+    return () => ipcRenderer.removeAllListeners('mdns-error');
+  },
 });

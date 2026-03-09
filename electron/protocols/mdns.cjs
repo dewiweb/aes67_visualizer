@@ -265,9 +265,40 @@ function browseAvahi(callbacks) {
       }
     });
 
-    proc.stderr && proc.stderr.on('data', () => {});
+    let avahiErrorSent = false;
+
+    proc.stderr && proc.stderr.on('data', (data) => {
+      const msg = data.toString();
+      if (!avahiErrorSent && msg.toLowerCase().includes('daemon not running')) {
+        avahiErrorSent = true;
+        console.warn('[mDNS] avahi-daemon is not running');
+        process.send && process.send({
+          type: 'mdns-error',
+          code: 'AVAHI_DAEMON_NOT_RUNNING',
+          message:
+            'avahi-daemon is not running — mDNS device discovery is disabled.\n' +
+            'Fix: sudo systemctl enable --now avahi-daemon\n' +
+            'Install: sudo apt install avahi-daemon avahi-utils  (Debian/Ubuntu)\n' +
+            '         sudo pacman -S avahi                        (Arch)\n' +
+            '         sudo dnf install avahi avahi-tools          (Fedora)',
+        });
+      }
+    });
     proc.on('error', (err) => {
       console.warn(`[mDNS] avahi-browse error for ${svc.type}: ${err.message}`);
+      if (!avahiErrorSent && err.code === 'ENOENT') {
+        avahiErrorSent = true;
+        process.send && process.send({
+          type: 'mdns-error',
+          code: 'AVAHI_NOT_FOUND',
+          message:
+            'avahi-browse not found — mDNS device discovery is disabled.\n' +
+            'Install: sudo apt install avahi-daemon avahi-utils  (Debian/Ubuntu)\n' +
+            '         sudo pacman -S avahi                        (Arch)\n' +
+            '         sudo dnf install avahi avahi-tools          (Fedora)\n' +
+            'Then: sudo systemctl enable --now avahi-daemon',
+        });
+      }
     });
     proc.on('close', (code) => {
       const idx = browseProcs.indexOf(proc);

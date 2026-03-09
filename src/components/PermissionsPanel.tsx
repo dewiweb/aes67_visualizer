@@ -4,6 +4,7 @@ import { PortConflictData } from '../types';
 
 interface PermissionsPanelProps {
   portConflicts: PortConflictData[];
+  mdnsError: { code: string; message: string } | null;
 }
 
 interface PermissionRow {
@@ -12,10 +13,8 @@ interface PermissionRow {
   usage: string;
   windows: 'ok' | 'warn' | 'err';
   linux: 'ok' | 'warn' | 'err';
-  macos: 'ok' | 'warn' | 'err';
   windowsNote?: string;
   linuxNote?: string;
-  macosNote?: string;
 }
 
 const PERMISSION_MATRIX: PermissionRow[] = [
@@ -25,19 +24,16 @@ const PERMISSION_MATRIX: PermissionRow[] = [
     usage: 'SAP stream discovery (239.255.255.255)',
     windows: 'ok',
     linux: 'ok',
-    macos: 'ok',
-    linuxNote: 'Requires bind on 0.0.0.0 (already done)',
+    linuxNote: 'Bind on 0.0.0.0 (already done)',
   },
   {
     port: 5353,
     protocol: 'UDP multicast',
-    usage: 'mDNS device discovery (224.0.0.251)',
+    usage: 'mDNS device discovery — via avahi-browse (Linux) / Bonjour dns-sd (Windows)',
     windows: 'ok',
     linux: 'warn',
-    macos: 'ok',
-    windowsNote: 'Via Bonjour (dns-sd)',
-    linuxNote: 'Requires avahi-daemon running. Install: sudo apt install avahi-daemon avahi-utils',
-    macosNote: 'Via mDNSResponder (built-in)',
+    windowsNote: 'Requires Bonjour Service (Apple)',
+    linuxNote: 'Requires avahi-daemon running + avahi-utils installed',
   },
   {
     port: '319, 320',
@@ -45,10 +41,7 @@ const PERMISSION_MATRIX: PermissionRow[] = [
     usage: 'PTP IEEE 1588 clock monitoring',
     windows: 'ok',
     linux: 'err',
-    macos: 'ok',
-    linuxNote: 'Ports <1024 require privilege. Fix: sudo setcap cap_net_bind_service=+eip /path/to/app  OR  sudo sysctl -w net.ipv4.ip_unprivileged_port_start=319',
-    windowsNote: 'No special permissions needed',
-    macosNote: 'No special permissions needed',
+    linuxNote: 'Ports <1024 require privilege — sysctl or setcap needed (see below)',
   },
   {
     port: 4440,
@@ -56,18 +49,15 @@ const PERMISSION_MATRIX: PermissionRow[] = [
     usage: 'Dante ARC device control (read + write)',
     windows: 'ok',
     linux: 'ok',
-    macos: 'ok',
   },
   {
     port: '5004+',
     protocol: 'UDP multicast',
-    usage: 'RTP audio metering (stream-dependent)',
+    usage: 'RTP audio metering (stream-dependent port)',
     windows: 'warn',
     linux: 'warn',
-    macos: 'warn',
-    windowsNote: 'Port 5004 may conflict with Apple MIDI / loopMIDI / rtpMIDI driver',
-    linuxNote: 'Port 5004 may conflict with jackd, pipewire-jack, raveloxmidi. Check: sudo lsof -i UDP:5004',
-    macosNote: 'Port 5004 often used by Apple RTP MIDI (rtpmidi). Fix: System Settings → General → AirDrop & Handoff → disable "AirPlay Receiver"',
+    windowsNote: 'Port 5004 may conflict with rtpMIDI driver / loopMIDI / Apple MIDI',
+    linuxNote: 'Port 5004 may conflict with jackd, pipewire-jack, raveloxmidi',
   },
   {
     port: 554,
@@ -75,7 +65,6 @@ const PERMISSION_MATRIX: PermissionRow[] = [
     usage: 'RTSP DESCRIBE for RAVENNA streams',
     windows: 'ok',
     linux: 'ok',
-    macos: 'ok',
   },
 ];
 
@@ -85,17 +74,13 @@ const STATUS_ICON = {
   err:  <ShieldX      size={14} className="text-red-400 shrink-0" />,
 };
 
-const OS_LABEL = ['Windows', 'Linux', 'macOS'] as const;
-type OsKey = 'windows' | 'linux' | 'macos';
-const OS_KEYS: OsKey[] = ['windows', 'linux', 'macos'];
+type OsKey = 'windows' | 'linux';
+const OS_KEYS: OsKey[] = ['windows', 'linux'];
+const OS_LABEL: Record<OsKey, string> = { windows: 'Windows', linux: 'Linux' };
 
-const PermissionsPanel: React.FC<PermissionsPanelProps> = ({ portConflicts }) => {
+const PermissionsPanel: React.FC<PermissionsPanelProps> = ({ portConflicts, mdnsError }) => {
   const platform = window.navigator.platform.toLowerCase();
-  const currentOs: OsKey = platform.includes('win')
-    ? 'windows'
-    : platform.includes('mac') || platform.includes('darwin')
-    ? 'macos'
-    : 'linux';
+  const currentOs: OsKey = platform.includes('win') ? 'windows' : 'linux';
 
   return (
     <div className="p-4 space-y-6">
@@ -139,11 +124,11 @@ const PermissionsPanel: React.FC<PermissionsPanelProps> = ({ portConflicts }) =>
               <tr className="bg-slate-800/60 border-b border-slate-700/50">
                 <th className="text-left px-3 py-2 text-slate-400 font-medium">Port</th>
                 <th className="text-left px-3 py-2 text-slate-400 font-medium">Usage</th>
-                {OS_KEYS.map((os, i) => (
+                {OS_KEYS.map((os) => (
                   <th key={os} className={`text-center px-2 py-2 font-medium ${
                     os === currentOs ? 'text-white' : 'text-slate-500'
                   }`}>
-                    {os === currentOs ? '★ ' : ''}{OS_LABEL[i]}
+                    {os === currentOs ? '★ ' : ''}{OS_LABEL[os]}
                   </th>
                 ))}
               </tr>
@@ -197,32 +182,45 @@ const PermissionsPanel: React.FC<PermissionsPanelProps> = ({ portConflicts }) =>
             {currentOs === 'linux' && <span className="text-amber-400 text-[10px]">(current OS)</span>}
           </div>
           <div className="space-y-1.5 text-slate-400">
+            {/* Avahi runtime error */}
+            {mdnsError && (
+              <div className="bg-amber-950/40 border border-amber-700/50 rounded p-2 text-amber-300">
+                <div className="font-medium text-[10px] uppercase tracking-wide mb-0.5">
+                  {mdnsError.code === 'AVAHI_NOT_FOUND' ? 'avahi-browse not found' : 'avahi-daemon not running'}
+                </div>
+                <pre className="whitespace-pre-wrap text-[10px] font-mono text-amber-400/80">{mdnsError.message}</pre>
+              </div>
+            )}
+            <div>
+              <span className="text-slate-300">mDNS (Avahi)</span> — dependency, not a permission issue:
+            </div>
+            <pre className="bg-slate-900/60 rounded px-2 py-1.5 text-[10px] font-mono text-emerald-300 whitespace-pre-wrap">
+{`sudo apt install avahi-daemon avahi-utils   # Debian/Ubuntu
+sudo pacman -S avahi                         # Arch
+sudo dnf install avahi avahi-tools           # Fedora
+sudo systemctl enable --now avahi-daemon`}
+            </pre>
             <div>
               <span className="text-slate-300">PTP ports 319/320</span> — requires one of:
             </div>
             <pre className="bg-slate-900/60 rounded px-2 py-1.5 text-[10px] font-mono text-emerald-300 whitespace-pre-wrap">
-{`# Option 1: kernel parameter (temporary, reset on reboot)
-sudo sysctl -w net.ipv4.ip_unprivileged_port_start=319
-
-# Option 2: kernel parameter (persistent)
+{`# Option 1 — persistent (recommended):
 echo "net.ipv4.ip_unprivileged_port_start=319" | sudo tee /etc/sysctl.d/99-ptp.conf
 sudo sysctl -p /etc/sysctl.d/99-ptp.conf
 
-# Option 3: setcap on the extracted binary
-sudo setcap cap_net_bind_service=+eip /path/to/aes67-visualizer`}
+# Option 2 — temporary (reset on reboot):
+sudo sysctl -w net.ipv4.ip_unprivileged_port_start=319
+
+# Option 3 — setcap (extract AppImage first):
+./aes67-visualizer.AppImage --appimage-extract
+sudo setcap cap_net_bind_service=+eip squashfs-root/aes67-visualizer`}
             </pre>
             <div>
-              <span className="text-slate-300">mDNS (Avahi)</span>:
+              <span className="text-slate-300">Port 5004 conflict</span> — check with:
             </div>
             <pre className="bg-slate-900/60 rounded px-2 py-1.5 text-[10px] font-mono text-emerald-300">
-{`sudo apt install avahi-daemon avahi-utils   # Debian/Ubuntu
-sudo systemctl enable --now avahi-daemon`}
+{`sudo lsof -i UDP:5004   # identify conflicting process (jackd, raveloxmidi...)`}
             </pre>
-            <div className="text-slate-500 text-[10px]">
-              ℹ AppImage: setcap cannot be applied directly to an AppImage. Extract first with{' '}
-              <code className="bg-slate-900/60 px-1 rounded">./aes67-visualizer.AppImage --appimage-extract</code>,
-              then apply setcap to the extracted binary inside <code className="bg-slate-900/60 px-1 rounded">squashfs-root/</code>.
-            </div>
           </div>
         </div>
 
@@ -236,13 +234,13 @@ sudo systemctl enable --now avahi-daemon`}
             🪟 Windows
             {currentOs === 'windows' && <span className="text-blue-400 text-[10px]">(current OS)</span>}
           </div>
-          <div className="text-slate-400 space-y-1">
+          <div className="text-slate-400 space-y-1.5">
             <div>✅ No special permissions required for any port.</div>
             <div>
-              <span className="text-slate-300">Bonjour/mDNS</span>: requires Apple Bonjour Service (installed with iTunes or standalone).
+              <span className="text-slate-300">Bonjour/mDNS</span>: requires Apple Bonjour Service.{' '}
               <a
                 href="https://support.apple.com/downloads/bonjour-for-windows"
-                className="text-blue-400 hover:underline ml-1"
+                className="text-blue-400 hover:underline"
                 target="_blank"
                 rel="noreferrer"
               >
@@ -250,39 +248,14 @@ sudo systemctl enable --now avahi-daemon`}
               </a>
             </div>
             <div>
-              <span className="text-slate-300">Firewall</span>: allow inbound UDP on ports 9875, 5353, 319, 320, 5004 for this app.
+              <span className="text-slate-300">Firewall</span>: allow inbound UDP 9875, 5353, 319, 320, 5004.
             </div>
-          </div>
-        </div>
-
-        {/* macOS */}
-        <div className={`rounded-lg border p-3 text-xs space-y-2 ${
-          currentOs === 'macos'
-            ? 'border-slate-500/50 bg-slate-800/30'
-            : 'border-slate-700/30 bg-slate-800/20'
-        }`}>
-          <div className="font-semibold text-slate-300 flex items-center gap-1.5">
-            🍎 macOS
-            {currentOs === 'macos' && <span className="text-slate-400 text-[10px]">(current OS)</span>}
-          </div>
-          <div className="text-slate-400 space-y-1.5">
-            <div>✅ mDNS via built-in mDNSResponder — no setup needed.</div>
-            <div>✅ PTP ports 319/320 accessible without privilege.</div>
             <div>
-              <span className="text-slate-300">Firewall</span>: System Settings → Network → Firewall → allow incoming connections for AES67 Visualizer.
+              <span className="text-slate-300">Port 5004 conflict</span> — rtpMIDI driver or loopMIDI may use it:
             </div>
-            <div className="border-t border-slate-700/40 pt-1.5">
-              <span className="text-amber-300">⚠ Port 5004 — RTP MIDI conflict</span>
-              <div className="mt-1">macOS 10.14+ enables Apple RTP MIDI (rtpmidi) by default on UDP 5004.</div>
-              <div className="mt-1 font-medium text-slate-300">Fix (macOS 13+):</div>
-              <pre className="bg-slate-900/60 rounded px-2 py-1.5 text-[10px] font-mono text-emerald-300 whitespace-pre-wrap mt-1">
-{`System Settings → General → AirDrop & Handoff → disable "AirPlay Receiver"`}
-              </pre>
-              <div className="mt-1 font-medium text-slate-300">Fix (all versions, terminal):</div>
-              <pre className="bg-slate-900/60 rounded px-2 py-1.5 text-[10px] font-mono text-emerald-300 whitespace-pre-wrap mt-1">
-{`sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.rtpmidid.plist`}
-              </pre>
-            </div>
+            <pre className="bg-slate-900/60 rounded px-2 py-1.5 text-[10px] font-mono text-emerald-300">
+{`netstat -ano | findstr :5004   # identify conflicting PID`}
+            </pre>
           </div>
         </div>
       </div>

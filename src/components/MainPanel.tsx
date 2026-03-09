@@ -22,6 +22,7 @@ interface MainPanelProps {
   slots: MonitorSlot[];
   playingStreamId: string | null;
   portConflicts: PortConflictData[];
+  mdnsError: { code: string; message: string } | null;
   onAddManualStream: (sdp: string) => void;
   onRemoveStream: (streamId: string) => void;
   onPlayStream: (stream: Stream, ch1: number, ch2: number) => void;
@@ -40,6 +41,7 @@ const MainPanel: React.FC<MainPanelProps> = ({
   slots,
   playingStreamId,
   portConflicts,
+  mdnsError,
   onAddManualStream,
   onRemoveStream,
   onPlayStream,
@@ -233,7 +235,7 @@ const MainPanel: React.FC<MainPanelProps> = ({
           )}
         </div>
         <div className="flex-1 overflow-y-auto">
-          <PermissionsPanel portConflicts={portConflicts} />
+          <PermissionsPanel portConflicts={portConflicts} mdnsError={mdnsError} />
         </div>
       </div>
     );

@@ -75,6 +75,7 @@ const App: React.FC = () => {
   const [activeDragStream, setActiveDragStream] = useState<Stream | null>(null);
   const [portConflict, setPortConflict] = useState<PortConflictData | null>(null);
   const [portConflicts, setPortConflicts] = useState<PortConflictData[]>([]);
+  const [mdnsError, setMdnsError] = useState<{ code: string; message: string } | null>(null);
   const [activeView, setActiveView] = useState<ViewId>('monitoring');
 
   // DnD sensors
@@ -139,6 +140,11 @@ const App: React.FC = () => {
       setPortConflict(null);
     });
 
+    // Subscribe to mDNS system errors (avahi missing / daemon not running)
+    const unsubMdnsError = window.api.onMdnsError && window.api.onMdnsError((data) => {
+      setMdnsError(data);
+    });
+
     // Subscribe to Dante device list
     const unsubDanteDevices = window.api.onDanteDevices((devices) => {
       setDanteDevices(devices);
@@ -171,6 +177,7 @@ const App: React.FC = () => {
       if (unsubPtpStatus) unsubPtpStatus();
       unsubPtpClocks();
       unsubDanteDevices();
+      if (unsubMdnsError) unsubMdnsError();
     };
   }, []);
 
@@ -442,6 +449,7 @@ const App: React.FC = () => {
             slots={slots}
             playingStreamId={playingStreamId}
             portConflicts={portConflicts}
+            mdnsError={mdnsError}
             onAddManualStream={handleAddManualStream}
             onRemoveStream={handleRemoveStream}
             onPlayStream={handlePlayStream}

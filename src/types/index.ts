@@ -209,6 +209,7 @@ export interface ElectronAPI {
   onPtpClocks: (callback: (clocks: PtpClock[]) => void) => () => void;
   onDanteDevices: (callback: (devices: DanteDevice[]) => void) => () => void;
   arcSetDeviceName: (ip: string, port: number | null, name: string | null) => Promise<{ ok: boolean; error?: string }>;
+  onMdnsError: (callback: (data: { code: string; message: string }) => void) => () => void;
 }
 
 export interface PortConflictData {

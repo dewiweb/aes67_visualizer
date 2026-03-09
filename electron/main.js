@@ -308,6 +308,9 @@ function initChildProcesses() {
       console.log('[Dante]', data.status);
     } else if (data.type === 'error') {
       console.error('[Dante Error]', data.message);
+    } else if (data.type === 'mdns-error') {
+      console.warn('[mDNS]', data.code, data.message);
+      sendToRenderer('mdns-error', { code: data.code, message: data.message });
     }
   });
 }
