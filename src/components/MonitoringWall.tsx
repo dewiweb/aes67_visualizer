@@ -70,47 +70,47 @@ const MonitorSlotComponent: React.FC<SlotProps> = ({ slot, levels, ptpStatus, t,
           </div>
 
           {/* Meters */}
-          <div className="p-3">
-            <div className="flex gap-2 h-32 justify-center">
-              {levels && levels.length > 0 ? (
-                levels.map((level, i) => (
-                  <div key={i} className="flex flex-col items-center gap-1">
-                    <LevelMeter
-                      current={level.current}
-                      peak={level.peak}
-                      lufs={level.lufs}
-                      vertical
-                      showLabels
-                      className="h-full"
-                    />
-                    <span className="text-[10px] text-slate-500">{i + 1}</span>
-                  </div>
-                ))
-              ) : (
-                // Placeholder meters
-                Array.from({ length: slot.stream.channels || 2 }, (_, i) => (
-                  <div key={i} className="flex flex-col items-center gap-1">
-                    <LevelMeter
-                      current={-100}
-                      peak={-100}
-                      vertical
-                      className="h-full"
-                    />
-                    <span className="text-[10px] text-slate-500">{i + 1}</span>
-                  </div>
-                ))
-              )}
-            </div>
+          {(() => {
+            const chCount = slot.stream.channels || 2;
+            const compact  = chCount > 4; // thin bars, no per-channel labels
+            const activeLevels = levels && levels.length > 0 ? levels
+              : Array.from({ length: chCount }, () => ({ current: -100, peak: -100, lufs: undefined }));
 
-            {/* Stream info */}
-            <div className="mt-2 flex items-center justify-center gap-2 text-xs text-slate-500">
-              <span>{slot.stream.codec}</span>
-              <span>•</span>
-              <span>{slot.stream.sampleRate / 1000}kHz</span>
-              <span>•</span>
-              <span>{slot.stream.channels}ch</span>
-            </div>
-          </div>
+            // Single LUFS value: max across channels (most prominent signal)
+            const lufsValues = activeLevels.map(l => l.lufs ?? -100).filter(v => v > -100);
+            const lufsMax = lufsValues.length > 0 ? Math.max(...lufsValues) : null;
+
+            return (
+              <div className="p-3">
+                <div className={`flex h-28 justify-center ${compact ? 'gap-0.5' : 'gap-2'}`}>
+                  {activeLevels.map((level, i) => (
+                    <div key={i} className={`flex flex-col items-center ${compact ? 'gap-0' : 'gap-1'}`}>
+                      <LevelMeter
+                        current={level.current}
+                        peak={level.peak}
+                        vertical
+                        showLabels={!compact}
+                        className="h-full"
+                      />
+                      {!compact && (
+                        <span className="text-[10px] text-slate-500">{i + 1}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Footer: stream info + global LUFS */}
+                <div className="mt-1.5 flex items-center justify-between text-xs text-slate-500">
+                  <span>{slot.stream.codec} · {slot.stream.sampleRate / 1000}kHz · {chCount}ch</span>
+                  {lufsMax !== null && (
+                    <span className="text-sky-400 font-mono text-[11px]">
+                      {lufsMax.toFixed(1)} LU
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </>
       ) : (
         // Empty slot
