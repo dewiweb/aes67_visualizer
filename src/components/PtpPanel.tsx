@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { PtpClock } from '../types';
+import React, { useState, useMemo } from 'react';
+import { PtpClock, DanteDevice } from '../types';
 
 interface PtpPanelProps {
   clocks: PtpClock[];
+  danteDevices: DanteDevice[];
 }
 
 function clockClassLabel(cls: number | null): string {
@@ -38,7 +39,33 @@ const Row: React.FC<{ label: string; value: React.ReactNode; highlight?: boolean
   </div>
 );
 
-const ClockCard: React.FC<{ clock: PtpClock }> = ({ clock }) => {
+/**
+ * Extract the MAC from an EUI-64 clock identity.
+ * XX-XX-XX-FF-FE-XX-XX-XX → XX:XX:XX:XX:XX:XX
+ */
+function clockIdentityToMac(id: string): string | null {
+  const parts = id.split('-');
+  if (parts.length !== 8) return null;
+  if (parts[3].toUpperCase() !== 'FF' || parts[4].toUpperCase() !== 'FE') return null;
+  return [parts[0], parts[1], parts[2], parts[5], parts[6], parts[7]]
+    .join(':').toUpperCase();
+}
+
+/**
+ * Build a map: normalised MAC → device name
+ */
+function buildMacMap(devices: DanteDevice[]): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const d of devices) {
+    if (d.macAddress) {
+      const mac = d.macAddress.toUpperCase().replace(/[^0-9A-F]/g, ':').replace(/[^0-9A-F:]/g, '');
+      m.set(mac, d.name || d.ip);
+    }
+  }
+  return m;
+}
+
+const ClockCard: React.FC<{ clock: PtpClock; macMap: Map<string, string> }> = ({ clock, macMap }) => {
   const [expanded, setExpanded] = useState(false);
 
   const borderColor = clock.isGrandmaster
@@ -67,7 +94,20 @@ const ClockCard: React.FC<{ clock: PtpClock }> = ({ clock }) => {
           <span className={`text-xs px-1.5 py-0.5 rounded font-medium shrink-0 ${roleBadgeColor}`}>
             {roleLabel}
           </span>
-          <span className="text-xs font-mono text-slate-200 truncate">{clock.displayId}</span>
+          <div className="flex flex-col min-w-0">
+            {(() => {
+              const mac = clockIdentityToMac(clock.clockIdentity);
+              const deviceName = mac ? macMap.get(mac) : undefined;
+              return deviceName ? (
+                <>
+                  <span className="text-xs font-medium text-white truncate">{deviceName}</span>
+                  <span className="text-[10px] font-mono text-slate-500 truncate">{clock.displayId}</span>
+                </>
+              ) : (
+                <span className="text-xs font-mono text-slate-200 truncate">{clock.displayId}</span>
+              );
+            })()}
+          </div>
         </div>
         <div className="flex items-center gap-2 shrink-0 ml-2">
           <span className="text-xs text-slate-500">D{clock.domainNumber}</span>
@@ -78,9 +118,17 @@ const ClockCard: React.FC<{ clock: PtpClock }> = ({ clock }) => {
       {expanded && (
         <div className="px-3 py-2 bg-slate-850 border-t border-slate-700 space-y-0.5">
           <Row label="Clock ID"         value={clock.clockIdentity} />
-          {clock.grandmasterDisplayId && !clock.isGrandmaster && (
-            <Row label="Grandmaster"    value={clock.grandmasterDisplayId} highlight />
-          )}
+          {clock.grandmasterDisplayId && !clock.isGrandmaster && (() => {
+            const gmMac = clock.grandmasterIdentity ? clockIdentityToMac(clock.grandmasterIdentity) : null;
+            const gmName = gmMac ? macMap.get(gmMac) : undefined;
+            return (
+              <Row
+                label="Grandmaster"
+                value={gmName ? `${gmName} (${clock.grandmasterDisplayId})` : clock.grandmasterDisplayId}
+                highlight
+              />
+            );
+          })()}
           <Row label="Domain"           value={clock.domainNumber} />
           <Row label="Priority 1"       value={clock.priority1} />
           <Row label="Priority 2"       value={clock.priority2} />
@@ -115,7 +163,8 @@ const ClockCard: React.FC<{ clock: PtpClock }> = ({ clock }) => {
   );
 };
 
-const PtpPanel: React.FC<PtpPanelProps> = ({ clocks }) => {
+const PtpPanel: React.FC<PtpPanelProps> = ({ clocks, danteDevices }) => {
+  const macMap = useMemo(() => buildMacMap(danteDevices), [danteDevices]);
   const domains = [...new Set(clocks.map(c => c.domainNumber))].sort((a, b) => a - b);
 
   return (
@@ -150,13 +199,18 @@ const PtpPanel: React.FC<PtpPanelProps> = ({ clocks }) => {
             const gm = domainClocks.find(c => c.isGrandmaster);
             return (
               <div key={domain} className="mb-3">
-                {domains.length > 1 && (
-                  <div className="text-xs text-slate-500 mb-1 px-1">
-                    Domain {domain} {gm ? `· GM: ${gm.displayId}` : '· No grandmaster'}
-                  </div>
-                )}
+                {domains.length > 1 && (() => {
+                  const gmMac = gm?.grandmasterIdentity ? clockIdentityToMac(gm.grandmasterIdentity) : null;
+                  const gmName = gmMac ? macMap.get(gmMac) : undefined;
+                  const gmLabel = gm ? (gmName ? `${gmName} (${gm.displayId})` : gm.displayId) : 'No grandmaster';
+                  return (
+                    <div className="text-xs text-slate-500 mb-1 px-1">
+                      Domain {domain} · GM: {gmLabel}
+                    </div>
+                  );
+                })()}
                 {domainClocks.map(clock => (
-                  <ClockCard key={clock.clockIdentity} clock={clock} />
+                  <ClockCard key={clock.clockIdentity} clock={clock} macMap={macMap} />
                 ))}
               </div>
             );

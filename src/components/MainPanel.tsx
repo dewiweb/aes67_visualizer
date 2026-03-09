@@ -153,7 +153,7 @@ const MainPanel: React.FC<MainPanelProps> = ({
           <h2 className="text-base font-semibold text-white">PTP — IEEE 1588</h2>
         </div>
         <div className="flex-1 overflow-y-auto">
-          <PtpPanel clocks={ptpClocks} />
+          <PtpPanel clocks={ptpClocks} danteDevices={danteDevices} />
         </div>
       </div>
     );
