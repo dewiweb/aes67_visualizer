@@ -46,8 +46,9 @@ const ravenna = require('../protocols/ravenna.cjs');
 
 // Device registry: IP → unified device object
 const devices   = new Map();
-let updateTimer = null;
-let mdnsHandle  = null;
+let updateTimer    = null;
+let mdnsHandle     = null;
+let announceServer = null;
 
 // ─── Unified device model helpers ────────────────────────────────────────────
 
@@ -422,11 +423,28 @@ async function probeRtspIp(ip, streamNames = []) {
 function init() {
   stop();
   mdnsHandle = mdns.browse({ onUp: onServiceUp, onDown: onServiceDown });
+
+  // Start RTSP ANNOUNCE server — receives SDP pushed by RAVENNA devices
+  announceServer = rtsp.createAnnounceServer([554, 9010]);
+  announceServer.on('announce', ({ sdp, sourceIp, url }) => {
+    // Upsert device so it appears in the registry even without mDNS
+    upsert(sourceIp, {
+      ip:             sourceIp,
+      protocolFamily: 'ravenna',
+      isRAVENNA:      true,
+      isAES67:        true,
+      discoveredBy:   ['rtsp-announce'],
+    });
+    scheduleUpdate();
+    process.send({ type: 'ravenna-sdp', name: sourceIp, sdp, sourceIp });
+  });
+
   process.send({ type: 'status', status: 'browsing' });
 }
 
 function stop() {
-  if (mdnsHandle) { mdnsHandle.stop(); mdnsHandle = null; }
+  if (mdnsHandle)     { mdnsHandle.stop(); mdnsHandle = null; }
+  if (announceServer) { announceServer.stop(); announceServer = null; }
   devices.clear();
   clearTimeout(updateTimer);
 }
