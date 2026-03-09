@@ -462,7 +462,22 @@ function handlePacketV1(buf, header, rinfo) {
 
 // ── Main packet handler ───────────────────────────────────────────────────────
 
+// DEBUG: rate-limit logging (max 1 log per unique byte[0..3] pattern per 10s)
+const _debugSeen = new Map();
+function _debugLog(buf, rinfo) {
+  const key = buf.slice(0, 4).toString('hex');
+  const now = Date.now();
+  if (!_debugSeen.has(key) || now - _debugSeen.get(key) > 10000) {
+    _debugSeen.set(key, now);
+    const hex8 = Array.from(buf.slice(0, 8)).map(b => b.toString(16).padStart(2,'0')).join(' ');
+    console.log(`[PTP DEBUG] src=${rinfo?.address} len=${buf.length} bytes[0..7]=${hex8}`);
+  }
+}
+
 function handlePacket(buf, rinfo) {
+  // DEBUG: log all unique packet patterns to diagnose PTPv1 detection
+  _debugLog(buf, rinfo);
+
   // Try PTPv1 first (Dante default) — v1 byte 0 = 0x01, v2 byte 1 low nibble = 0x02
   const v1header = parseHeaderV1(buf);
   if (v1header) {
