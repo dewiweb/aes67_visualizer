@@ -377,35 +377,73 @@ RAVENNA has no equivalent to ARC's `0x3010` subscription command. Options:
 **Decision**: RAVENNA routing not implemented. RAVENNA devices can be subscribed to Dante TX sources
 via Dante Controller (which uses ARC). For RAVENNA-to-RAVENNA routing, the device's own web UI must be used.
 
-### rhastie/easy-nmos
+### rhastie/easy-nmos + AMWA IS-04/IS-05 specs
 - **URL**: https://github.com/rhastie/easy-nmos
-- **License**: Apache-2.0
-- **Language**: Docker Compose (NVIDIA / AMWA)
-- **Scope**: Easy NMOS IS-04/IS-05 setup for testing — Docker Compose with 3 containers: NMOS Registry (`nmos-cpp`), virtual NMOS Node (`nmos-cpp`), AMWA NMOS Testing Tool.
-- **Key learnings — NMOS service structure**:
-  - IS-04 Node API: `GET /x-nmos/node/v1.x/self` → node identity (id, label, description, tags, href, caps, services, clocks, interfaces)
-  - IS-04 Node API: `GET /x-nmos/node/v1.x/senders` → list of RTP senders (with SDP manifest_href)
-  - IS-04 Node API: `GET /x-nmos/node/v1.x/receivers` → list of RTP receivers
-  - IS-04 Registry API: `GET /x-nmos/registration/v1.x/` → registration endpoint (nodes POST themselves here)
-  - IS-04 Query API: `GET /x-nmos/query/v1.x/nodes` → query all registered nodes
-  - IS-05 Connection API: `GET /x-nmos/connection/v1.x/single/senders` + `PATCH .../active` → routing control
-- **Key learnings — mDNS service types** (IS-04 discovery):
-  - `_nmos-node._tcp` — IS-04 Node (advertised by each device)
-  - `_nmos-registration._tcp` — IS-04 Registry
-  - `_nmos-query._tcp` — IS-04 Query API
-  - `_nmos-connection._tcp` — IS-05 Connection API
-  - `_nmos-system._tcp` — IS-09 System API
-- **Key learnings — default ports**:
-  - Registry + Node APIs: port **80** (via mDNS TXT `api_proto=http`, `api_ver=v1.0,v1.1,v1.2,v1.3`)
-  - Testing tool: port **5000**
-  - Admin UI: `http://nmos-registry.local/admin`
-- **Key learnings — nmos-cpp (Sony)**:
-  - Reference C++ implementation of IS-04, IS-05, IS-07, IS-08, IS-09
-  - Config via JSON files (`registry.json`, `node.json`)
-  - Supports BCP-002-01 (natural grouping), BCP-003-01 (secure comms with TLS)
-  - `nmos-cpp` is the de-facto reference implementation used by most hardware vendors
-- **What easy-nmos confirms for our project**:
-  - NMOS IS-04 Node API is unauthenticated by default (no 401 expected)
-  - 500 on `/x-nmos/` = backend process not running (not an auth issue)
-  - Merging RAVENNA devices with 500 on NMOS → NMOS node process disabled in their firmware config
-  - For discovery: browse `_nmos-node._tcp` mDNS + HTTP GET `/x-nmos/node/v1.3/self` per device
+- **License**: Apache-2.0 (easy-nmos) / AMWA specs free to use
+- **Scope**: Docker Compose testbed: NMOS Registry + virtual Node (`nmos-cpp` by Sony) + AMWA Testing Tool.
+- **nmos-cpp config** (`registry.json`): `pri` (priority), `http_port` (default 80), `query_ws_port` (81), `registration_expiry_interval` (12s). Node config: `how_many` (number of virtual senders/receivers to create).
+
+#### IS-04 v1.3 — Discovery & Registration
+
+**mDNS service types** (browse with `_xxx._tcp.local`):
+- `_nmos-node._tcp` — IS-04 Node (each device advertises itself)
+- `_nmos-registration._tcp` — IS-04 Registry (nodes POST to register)
+- `_nmos-query._tcp` — IS-04 Query API (clients query registered resources)
+- `_nmos-connection._tcp` — IS-05 Connection API
+- `_nmos-system._tcp` — IS-09 System API
+- mDNS TXT records: `api_proto=http`, `api_ver=v1.0,v1.1,v1.2,v1.3`, `pri=<priority>`
+
+**IS-04 Node API** (`GET /x-nmos/node/v1.3/`):
+- Base returns array: `["self/", "sources/", "flows/", "devices/", "senders/", "receivers/"]`
+- `GET /self` → Node resource: `{id, label, description, tags, href, api:{versions,endpoints}, caps, services, clocks, interfaces}`
+  - `api.endpoints[]` = `{host, port, protocol, authorization}` — actual host/port for connecting
+  - `clocks[]` = either `clock_internal` or `clock_ptp` (with `traceable`, `gmid`, `locked_state`)
+  - `interfaces[]` = `{name, chassis_id, port_id}` — MAC addresses for topology (IS-06)
+  - `services[]` = `{href, type: "urn:x-nmos:control:sr-ctrl/v1.1"}` — IS-05 endpoint advertised here
+- `GET /senders` → array of Sender resources:
+  - `{id, label, flow_id, transport:"urn:x-nmos:transport:rtp.mcast", device_id, manifest_href, interface_bindings, subscription:{receiver_id,active}}`
+  - `manifest_href` = URL to SDP file — fetch this to get the stream SDP
+- `GET /receivers` → array of Receiver resources:
+  - `{id, label, format:"urn:x-nmos:format:audio", transport, device_id, interface_bindings, caps:{media_types}, subscription:{sender_id,active}}`
+- `GET /flows` → audio Flow: `{id, label, source_id, device_id, media_type:"audio/L24", sample_rate:{numerator:48000}, channels:[{label}]}`
+- `GET /sources` → audio Source: `{id, label, device_id, format:"urn:x-nmos:format:audio", clock_name, channels}`
+- `GET /devices` → Device: `{id, label, node_id, type:"urn:x-nmos:device:generic", senders:[], receivers:[], controls:[{href,type}]}`
+  - `controls` array contains IS-05 Connection API URL per device
+
+**Registration flow** (peer-to-peer vs registry):
+- With registry: Node POSTs to `POST /x-nmos/registration/v1.3/resource` with `{type:"node", data:{...}}`
+- Without registry (peer-to-peer): clients query Node API directly via mDNS
+- `registration_expiry_interval`: 12s default — nodes must re-register within this interval
+
+#### IS-05 v1.1 — Connection Management
+
+**IS-05 Connection API** (`GET /x-nmos/connection/v1.1/`):
+- Base returns: `["single/", "bulk/"]`
+- `GET /single/senders` → list of sender UUIDs
+- `GET /single/senders/{senderId}/active` → current active params
+- `PATCH /single/senders/{senderId}/staged` → stage connection params (not yet active)
+- `PATCH /single/senders/{senderId}/staged` with `activation.mode="activate_immediate"` → activate immediately
+- `GET /single/receivers/{receiverId}/active` → current subscription state
+- `PATCH /single/receivers/{receiverId}/staged` → subscribe receiver to a sender:
+  ```json
+  {
+    "sender_id": "<uuid>",
+    "master_enable": true,
+    "activation": {"mode": "activate_immediate"},
+    "transport_file": {"data": "<SDP content>", "type": "application/sdp"},
+    "transport_params": [{"interface_ip": "192.168.x.x", "multicast_ip": "239.x.x.x", "source_ip": "...", "destination_port": 5004, "rtp_enabled": true}]
+  }
+  ```
+- `transport_file.data` = raw SDP string OR null (let device fetch from `manifest_href`)
+- Activation modes: `"activate_immediate"`, `"activate_scheduled_absolute"`, `"activate_scheduled_relative"`
+- Bulk interface: `POST /bulk/senders` with array of `{id, params}` — for multi-sender control in one call
+
+**IS-05 endpoint discovery**: found in Node API `GET /devices/{id}` → `controls[].type = "urn:x-nmos:control:sr-ctrl/v1.1"` with `href` = IS-05 base URL
+
+#### Relevance for our project
+- **Discovery strategy**: browse `_nmos-node._tcp` → HTTP `GET /x-nmos/node/v1.3/self` → enrich `NetworkDevice` with NMOS id/label/clocks
+- **Stream enrichment**: `GET /senders` → `manifest_href` → fetch SDP → merge with SAP-discovered streams
+- **Routing**: `PATCH /x-nmos/connection/v1.1/single/receivers/{id}/staged` with SDP → RAVENNA routing without vendor-specific API
+- **Clock correlation**: Node `/self.clocks[]` has `gmid` (grandmaster identity) → cross-reference with PTP panel
+- **No auth by default**: IS-04/IS-05 are unauthenticated on LAN unless `authorization:true` in endpoint descriptor (BCP-003-01)
+- **500 on Merging devices** = NMOS backend process disabled in firmware — must be enabled in device Expert settings
