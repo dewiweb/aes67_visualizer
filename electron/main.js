@@ -26,6 +26,15 @@ let sapStreams = [];
 let danteDevices = [];
 let probedIps = new Set(); // IPs already probed via RTSP
 
+/**
+ * Safe IPC send — no-op if process is gone or channel is closed.
+ */
+function safeSend(proc, msg) {
+  if (proc && proc.connected) {
+    try { proc.send(msg); } catch (_) {}
+  }
+}
+
 // Persistent data
 let persistentData = store.get('persistentData', {
   settings: {
@@ -222,7 +231,7 @@ function initChildProcesses() {
         if (!probedIps.has(ip) && danteProcess) {
           probedIps.add(ip);
           // Try Dante ARC (UDP 4440) to get device name/model/channels
-          danteProcess.send({ type: 'probe-arc', ip });
+          safeSend(danteProcess, { type: 'probe-arc', ip });
         }
       }
     } else if (data.type === 'port-conflict') {
@@ -293,7 +302,8 @@ function initChildProcesses() {
 
   // Network Audio Discovery Process (mDNS + ARC + RTSP)
   danteProcess = fork(path.join(__dirname, 'processes/discovery.cjs'));
-  
+  danteProcess.on('exit', () => { danteProcess = null; });
+
   danteProcess.on('message', (data) => {
     if (data.type === 'dante-devices') {
       danteDevices = data.devices;
@@ -350,9 +360,7 @@ function setupIpcHandlers() {
       if (ptpProcess) {
         ptpProcess.send({ type: 'start', interface: address });
       }
-      if (danteProcess) {
-        danteProcess.send({ type: 'refresh' });
-      }
+      safeSend(danteProcess, { type: 'refresh' });
 
       sendToRenderer('interface-changed', iface);
     }
@@ -441,7 +449,7 @@ function setupIpcHandlers() {
   ipcMain.handle('arc-set-device-name', async (event, { ip, port, name }) => {
     try {
       const ok = await arc.setDeviceName(ip, port || arc.DEFAULT_PORT, name || null);
-      if (ok && danteProcess) danteProcess.send({ type: 'refresh' });
+      if (ok) safeSend(danteProcess, { type: 'refresh' });
       return { ok };
     } catch (e) {
       return { ok: false, error: e.message };
@@ -452,7 +460,7 @@ function setupIpcHandlers() {
   ipcMain.handle('arc-set-subscription', async (event, { ip, port, rxChannelId, txChannelName, txDeviceName }) => {
     try {
       const ok = await arc.setSubscription(ip, port || arc.DEFAULT_PORT, rxChannelId, txChannelName, txDeviceName);
-      if (ok && danteProcess) danteProcess.send({ type: 'refresh' });
+      if (ok) safeSend(danteProcess, { type: 'refresh' });
       return { ok };
     } catch (e) {
       return { ok: false, error: e.message };
@@ -463,7 +471,7 @@ function setupIpcHandlers() {
   ipcMain.handle('arc-unsubscribe-rx', async (event, { ip, port, rxChannelId }) => {
     try {
       const ok = await arc.unsubscribeRx(ip, port || arc.DEFAULT_PORT, rxChannelId);
-      if (ok && danteProcess) danteProcess.send({ type: 'refresh' });
+      if (ok) safeSend(danteProcess, { type: 'refresh' });
       return { ok };
     } catch (e) {
       return { ok: false, error: e.message };
@@ -499,9 +507,7 @@ app.whenReady().then(() => {
     if (ptpProcess) {
       ptpProcess.send({ type: 'start', interface: currentNetworkInterface.address });
     }
-    if (danteProcess) {
-      danteProcess.send({ type: 'init' });
-    }
+    safeSend(danteProcess, { type: 'init' });
   }
 
   app.on('activate', () => {
