@@ -74,7 +74,7 @@ function mergeDevice(existing, patch) {
 
   // Scalar fields — only fill in if currently empty
   const scalars = ['name', 'manufacturer', 'model', 'software',
-                   'arcpVers', 'routerVers', 'routerInfo', 'ptpGrandmaster'];
+                   'arcpVers', 'routerVers', 'routerInfo', 'ptpGrandmaster', 'macAddress'];
   for (const k of scalars) {
     if (!merged[k] && patch[k]) merged[k] = patch[k];
   }
@@ -154,6 +154,7 @@ function emptyDevice(ip) {
     routerVers:     null,
     routerInfo:     null,
     ptpGrandmaster: null,
+    macAddress:     null,
     addresses:      [ip],
     discoveredBy:   [],
     lastSeen:       Date.now(),
@@ -208,6 +209,10 @@ function parseService(service) {
     const isChanService = (service.type || '').includes('chan');
     const name = isChanService ? null : service.name;
 
+    // MAC address: from _netaudio-cmc._udp TXT 'id' field (e.g. "001dc1fffe506217")
+    const macRaw = txt.id || null;
+    const macAddress = macRaw && /^[0-9a-f]{12,16}$/i.test(macRaw) ? macRaw : null;
+
     return {
       ...base,
       name,
@@ -223,6 +228,7 @@ function parseService(service) {
       routerInfo:  txt.router_info || null,
       routerVers:  txt.router_vers || null,
       arcpVers:    txt.arcp_vers   || null,
+      macAddress,
     };
   }
 
@@ -258,6 +264,7 @@ function sendUpdate() {
     routerVers:     d.routerVers || null,
     routerInfo:     d.routerInfo || null,
     ptpGrandmaster: d.ptpGrandmaster || null,
+    macAddress:     d.macAddress || null,
     discoveredBy:   d.discoveredBy || [],
     lastSeen:       d.lastSeen || Date.now(),
   }));

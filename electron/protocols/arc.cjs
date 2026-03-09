@@ -187,8 +187,26 @@ async function getTxChannels(ip, port = DEFAULT_PORT, txCount = 0, timeout = DEF
 }
 
 /**
+ * Interpret the ARC RX channel status byte into a human-readable label.
+ * Status values reverse-engineered from network-audio-controller.
+ */
+function rxStatusText(statusByte) {
+  switch (statusByte) {
+    case 0x00: return 'Unsubscribed';
+    case 0x01: return 'Unresolved';   // tx device not found
+    case 0x04: return 'Unresolved';   // tx channel not found
+    case 0x08: return 'Unresolved';   // subscription pending
+    case 0x09: return 'Subscribed';   // active, locked
+    case 0x0A: return 'Subscribed';   // active, generic
+    case 0x10: return 'Dangling';     // was subscribed, tx device gone
+    case 0x14: return 'Dangling';     // was subscribed, tx channel gone
+    default:   return statusByte === 0 ? 'Unsubscribed' : 'Unresolved';
+  }
+}
+
+/**
  * Fetch RX channel names + subscription status from a Dante device.
- * Returns array of { id, name, txChannelName, txHost, subscribed } or [] on failure.
+ * Returns array of { id, name, txChannelName, txHost, subscribed, statusText } or [] on failure.
  * Uses OPCODE_RX_CHANNELS (0x3000) — paginated.
  */
 async function getRxChannels(ip, port = DEFAULT_PORT, rxCount = 0, timeout = DEFAULT_TIMEOUT) {
@@ -211,12 +229,14 @@ async function getRxChannels(ip, port = DEFAULT_PORT, rxCount = 0, timeout = DEF
       const txHostPtr      = buf.readUInt16BE(off + 8);
       const friendlyPtr    = buf.readUInt16BE(off + 10);
       const status         = buf.readUInt32BE(off + 12);
+      const statusByte = status & 0xFF;
       return {
         id:           channelId,
         name:         friendlyPtr > 0 ? readStringAtPointer(buf, friendlyPtr) : '',
         txChannelName: txChNamePtr > 0 ? readStringAtPointer(buf, txChNamePtr) : null,
         txHost:        txHostPtr   > 0 ? readStringAtPointer(buf, txHostPtr)   : null,
-        subscribed:    (status & 0xFF) === 0x09 || (status & 0xFF) === 0x0A,
+        subscribed:    statusByte === 0x09 || statusByte === 0x0A,
+        statusText:    rxStatusText(statusByte),
       };
     });
     channels.push(...parsed);

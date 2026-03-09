@@ -124,9 +124,14 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onS
                   )}
                 </div>
 
-                {/* Row 2: IP + manufacturer + model + software */}
+                {/* Row 2: IP + MAC + manufacturer + model + software */}
                 <div className="flex items-center gap-2 text-xs mt-0.5 flex-wrap">
                   <span className="font-mono text-slate-500">{ip}</span>
+                  {dd?.macAddress && (
+                    <span className="font-mono text-slate-600 text-[9px]">
+                      {dd.macAddress.replace(/(.{2})(?=.)/g, '$1:').toUpperCase()}
+                    </span>
+                  )}
                   {dd?.manufacturer && <span className="text-slate-400">{dd.manufacturer}</span>}
                   {dd?.model        && <span className="text-slate-500">{dd.model}</span>}
                   {dd?.software     && <span className="text-slate-600 italic">{dd.software}</span>}
@@ -207,20 +212,28 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, danteDevices, t, onS
                       <ArrowDownToLine size={10} /> RX Channels
                     </div>
                     <div className="space-y-0.5">
-                      {dd!.rxChannelNames.map(ch => (
-                        <div key={ch.id} className="flex items-center gap-1.5 text-[10px]">
-                          <span className="text-slate-600 w-5 text-right shrink-0">{ch.id}</span>
-                          <span className="text-slate-300 truncate">{ch.name || `ch${ch.id}`}</span>
-                          {ch.subscribed && ch.txHost && (
-                            <span className="text-slate-500 truncate ml-auto">
-                              ← {ch.txHost.replace(/\.local\.?$/, '')}
+                      {dd!.rxChannelNames.map(ch => {
+                        const statusColor =
+                          ch.statusText === 'Subscribed'   ? 'text-emerald-400' :
+                          ch.statusText === 'Dangling'     ? 'text-amber-400'   :
+                          ch.statusText === 'Unresolved'   ? 'text-red-400'     :
+                          'text-slate-600';
+                        return (
+                          <div key={ch.id} className="flex items-center gap-1.5 text-[10px]">
+                            <span className="text-slate-600 w-5 text-right shrink-0">{ch.id}</span>
+                            <span className="text-slate-300 truncate flex-1">{ch.name || `ch${ch.id}`}</span>
+                            {ch.txHost && (
+                              <span className="text-slate-500 truncate max-w-[80px]">
+                                ← {ch.txHost.replace(/\.local\.?$/, '')}
+                                {ch.txChannelName ? `/${ch.txChannelName}` : ''}
+                              </span>
+                            )}
+                            <span className={`shrink-0 font-medium ${statusColor}`}>
+                              {ch.statusText || (ch.subscribed ? 'Subscribed' : 'Unsubscribed')}
                             </span>
-                          )}
-                          {ch.subscribed && (
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
-                          )}
-                        </div>
-                      ))}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}

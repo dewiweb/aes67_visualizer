@@ -76,7 +76,7 @@ export interface DanteDevice {
   txChannels: number | null;
   rxChannels: number | null;
   txChannelNames: { id: number; name: string }[];
-  rxChannelNames: { id: number; name: string; txChannelName: string | null; txHost: string | null; subscribed: boolean }[];
+  rxChannelNames: { id: number; name: string; txChannelName: string | null; txHost: string | null; subscribed: boolean; statusText: string }[];
   isDante: boolean;
   isAES67: boolean;
   isRAVENNA: boolean;
@@ -88,6 +88,8 @@ export interface DanteDevice {
   routerInfo: string | null;
   /** PTP grandmaster identity */
   ptpGrandmaster: string | null;
+  /** MAC address from _netaudio-cmc._udp TXT field 'id' */
+  macAddress: string | null;
   /** Which discovery sources contributed data */
   discoveredBy: string[];
   lastSeen: number;
