@@ -652,6 +652,7 @@ function doEmit() {
 
   const list = [];
   for (const [, clock] of clocks) {
+    if (clock._placeholder) continue; // placeholder until MAC is resolved
     // Infer clockRole:
     //   grandmaster: clockIdentity === grandmasterIdentity
     //   boundary:    explicit flag (PTPv1) OR stepsRemoved > 0 AND syncCount > 0 (PTPv2 heuristic)
@@ -809,51 +810,118 @@ function setInterface(address) {
  */
 function injectDevices(devices) {
   let injected = 0;
+  let updated  = 0;
+  const now = Date.now();
+
+  // Build a lookup: IP → clockIdentity key, for devices we already track by IP
+  // (pre-registered before their MAC was available)
+  const ipToKey = new Map();
+  for (const [key, clock] of clocks) {
+    if (clock._fromMdns && clock.senderIp) ipToKey.set(clock.senderIp, key);
+  }
+
   for (const dev of devices) {
-    if (!dev.isDante) continue;           // only Dante devices use PTPv1
-    if (!dev.macAddress) continue;        // need MAC to build clockIdentity
+    if (!dev.isDante) continue;
 
-    // macAddress is 16-char hex EUI-64: e.g. '001dc1fffe506217'
-    // Format as XX-XX-XX-XX-XX-XX-XX-XX clockIdentity
-    const mac = dev.macAddress;
-    if (mac.length !== 16) continue;
+    // Build clockIdentity from MAC if available
+    let clockIdentity = null;
+    if (dev.macAddress && dev.macAddress.length === 16) {
+      const mac = dev.macAddress;
+      clockIdentity = [
+        mac.slice(0,2),  mac.slice(2,4),  mac.slice(4,6),
+        mac.slice(6,8),  mac.slice(8,10), mac.slice(10,12),
+        mac.slice(12,14),mac.slice(14,16),
+      ].map(s => s.toUpperCase()).join('-');
+    }
 
-    const clockIdentity = [
-      mac.slice(0,2), mac.slice(2,4), mac.slice(4,6),
-      mac.slice(6,8), mac.slice(8,10), mac.slice(10,12),
-      mac.slice(12,14), mac.slice(14,16),
-    ].map(s => s.toUpperCase()).join('-');
+    const key = clockIdentity ? `${clockIdentity}@0` : null;
 
-    const key = `${clockIdentity}@0`;
-    if (clocks.has(key)) {
-      // Already known via PTP packets — just update IP if missing
-      const existing = clocks.get(key);
-      if (!existing.senderIp && dev.ip) existing.senderIp = dev.ip;
+    // Case 1: MAC known, clock already registered (via PTP packet or prev inject)
+    if (key && clocks.has(key)) {
+      const c = clocks.get(key);
+      c.lastSeen = now;
+      if (!c.senderIp && dev.ip) c.senderIp = dev.ip;
+      // Remove stale IP-keyed placeholder if a proper MAC entry now exists
+      const oldKey = dev.ip ? ipToKey.get(dev.ip) : null;
+      if (oldKey && oldKey !== key && clocks.has(oldKey)) {
+        clocks.delete(oldKey);
+      }
       continue;
     }
 
-    // Register as PTPv1 slave (not yet seen via multicast)
-    clocks.set(key, {
-      clockIdentity,
-      domainNumber: 0,
-      isGrandmaster: false,
-      ptpVersion: 1,
-      ptpProfile: 'Dante (PTPv1)',
-      clockRole: 'slave',
-      ptpTimescale: false,
-      timeTraceable: false,
-      freqTraceable: false,
-      lastSeen: Date.now(),
-      announceCount: 0,
-      syncCount: 0,
-      senderIp: dev.ip || null,
-      grandmasterIdentity: null,
-      _fromMdns: true,  // mark as pre-populated, not yet confirmed by PTP packet
-    });
-    injected++;
+    // Case 2: MAC known, clock not yet registered → create it
+    if (key) {
+      // Remove IP-keyed placeholder if present
+      const oldKey = dev.ip ? ipToKey.get(dev.ip) : null;
+      if (oldKey && clocks.has(oldKey)) {
+        const old = clocks.get(oldKey);
+        // Migrate any PTP data already gathered
+        clocks.delete(oldKey);
+        clocks.set(key, {
+          ...old,
+          clockIdentity,
+          lastSeen: now,
+          _fromMdns: true,
+        });
+      } else {
+        clocks.set(key, {
+          clockIdentity,
+          domainNumber: 0,
+          isGrandmaster: false,
+          ptpVersion: 1,
+          ptpProfile: 'Dante (PTPv1)',
+          clockRole: null,
+          ptpTimescale: false,
+          timeTraceable: false,
+          freqTraceable: false,
+          lastSeen: now,
+          announceCount: 0,
+          syncCount: 0,
+          senderIp: dev.ip || null,
+          grandmasterIdentity: null,
+          _fromMdns: true,
+        });
+        injected++;
+      }
+      continue;
+    }
+
+    // Case 3: No MAC yet — register by IP as placeholder so the device appears immediately
+    if (dev.ip && !ipToKey.has(dev.ip)) {
+      // Check if any real (non-mdns) clock already has this IP
+      const realExists = [...clocks.values()].some(c => c.senderIp === dev.ip && !c._fromMdns);
+      if (!realExists) {
+        const placeholderKey = `_ip:${dev.ip}@0`;
+        if (!clocks.has(placeholderKey)) {
+          clocks.set(placeholderKey, {
+            clockIdentity: `_ip:${dev.ip}`,  // placeholder, will be replaced when MAC known
+            domainNumber: 0,
+            isGrandmaster: false,
+            ptpVersion: 1,
+            ptpProfile: 'Dante (PTPv1)',
+            clockRole: null,
+            ptpTimescale: false,
+            timeTraceable: false,
+            freqTraceable: false,
+            lastSeen: now,
+            announceCount: 0,
+            syncCount: 0,
+            senderIp: dev.ip,
+            grandmasterIdentity: null,
+            _fromMdns: true,
+            _placeholder: true,
+          });
+          injected++;
+          ipToKey.set(dev.ip, placeholderKey);
+        } else {
+          clocks.get(placeholderKey).lastSeen = now;
+        }
+      }
+    }
   }
-  if (injected > 0) {
-    console.log(`[PTP] Pre-populated ${injected} clocks from mDNS devices`);
+
+  if (injected > 0 || updated > 0) {
+    console.log(`[PTP] mDNS inject: +${injected} new, ~${updated} updated (total=${clocks.size})`);
     emitUpdate();
   }
 }
