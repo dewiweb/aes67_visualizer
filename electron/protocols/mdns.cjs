@@ -63,12 +63,20 @@ function resolveHost(host, callback) {
     };
 
     if (IS_LINUX) {
-      proc = spawn('avahi-resolve-host-name', ['-4', hostname]);
-      proc.stdout.on('data', (data) => {
-        // output: "hostname\t192.168.x.x"
-        const m = data.toString().match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
-        if (m) onIp(m[1]);
-      });
+      // Use multicast-dns raw A query — avoids avahi/D-Bus entirely
+      const queryName = hostname.endsWith('.local') ? hostname : `${hostname}.local`;
+      const onResponse = (response) => {
+        const allRecords = [...(response.answers || []), ...(response.additionals || [])];
+        const aRec = allRecords.find(r => r.type === 'A' && r.name === queryName && r.data);
+        if (aRec) {
+          mdns.removeListener('response', onResponse);
+          onIp(aRec.data);
+        }
+      };
+      mdns.on('response', onResponse);
+      try { mdns.query({ questions: [{ name: queryName, type: 'A' }] }); } catch (_) {}
+      // proc-like object for cleanup
+      proc = { kill() { mdns.removeListener('response', onResponse); } };
     } else {
       proc = spawn('dns-sd', ['-G', 'v4', host], { windowsHide: true });
       proc.stdout.on('data', (data) => {
@@ -77,9 +85,11 @@ function resolveHost(host, callback) {
       });
     }
 
-    proc.on('error', () => { if (!resolved) { resolved = true; clearTimeout(timer); callback(null); } });
-    proc.on('close', () => { if (!resolved) { resolved = true; callback(null); } });
-    proc.stderr && proc.stderr.on('data', () => {});
+    if (proc.on) {
+      proc.on('error', () => { if (!resolved) { resolved = true; clearTimeout(timer); callback(null); } });
+      proc.on('close', () => { if (!resolved) { resolved = true; callback(null); } });
+      proc.stderr && proc.stderr.on('data', () => {});
+    }
   });
 }
 
@@ -288,18 +298,16 @@ function browseMdns(callbacks) {
         active.set(key, { name: instanceName, type: svc.type });
         onUp({ name: instanceName, type: svc.type, host, addresses: [ip], port, txt, family: svc.family });
       } else if (host) {
-        // SRV found but no A record yet — store and resolve
-        pending.set(key, { svc, instanceName, host, port, txt });
-        resolveHost(host, (ip) => {
-          if (!pending.has(key)) return; // already resolved or gone
-          pending.delete(key);
-          if (active.has(key)) return;
-          active.set(key, { name: instanceName, type: svc.type });
-          onUp({ name: instanceName, type: svc.type, host, addresses: ip ? [ip] : [], port, txt, family: svc.family });
-        });
+        // SRV found but no A record yet — query A directly via mDNS (avoids avahi/D-Bus)
+        if (!pending.has(key)) {
+          pending.set(key, { svc, instanceName, host, port, txt });
+        }
+        try { mdns.query({ questions: [{ name: host, type: 'A' }] }); } catch (_) {}
       } else {
-        // PTR only — no SRV yet, query for it
-        pending.set(key, { svc, instanceName, host: null, port: 0, txt });
+        // PTR only — no SRV yet, query SRV+TXT
+        if (!pending.has(key)) {
+          pending.set(key, { svc, instanceName, host: null, port: 0, txt });
+        }
         try {
           mdns.query({ questions: [
             { name: instanceFqdn, type: 'SRV' },
@@ -309,9 +317,33 @@ function browseMdns(callbacks) {
       }
     }
 
-    // Try to resolve pending entries that now have A records
+    // Try to resolve pending entries using newly arrived SRV or A records
     for (const [key, info] of pending) {
-      if (!info.host || active.has(key)) continue;
+      if (active.has(key)) { pending.delete(key); continue; }
+
+      // If host was unknown (PTR-only), check if SRV arrived now
+      if (!info.host) {
+        const instanceFqdn = `${info.instanceName}.${info.svc.type}.local`;
+        const srv = allRecords.find(x => x.type === 'SRV' && x.name === instanceFqdn);
+        if (srv) {
+          info.host = srv.data.target;
+          info.port = srv.data.port || 0;
+          // Also pick up TXT if present
+          const txtR = allRecords.find(x => x.type === 'TXT' && x.name === instanceFqdn);
+          if (txtR && Array.isArray(txtR.data)) {
+            for (const buf of txtR.data) {
+              const str = Buffer.isBuffer(buf) ? buf.toString() : String(buf);
+              const eq = str.indexOf('=');
+              if (eq > 0) info.txt[str.slice(0, eq)] = str.slice(eq + 1);
+            }
+          }
+          // Query A record now that we have the hostname
+          try { mdns.query({ questions: [{ name: info.host, type: 'A' }] }); } catch (_) {}
+        }
+        continue;
+      }
+
+      // Host known — check if A record has arrived
       if (aRecords[info.host]) {
         pending.delete(key);
         active.set(key, { name: info.instanceName, type: info.svc.type });
