@@ -245,30 +245,25 @@ function browseMdns(callbacks) {
 
   mdns.on('response', (response) => {
     // Collect all records from answer + additional sections
-    // Normalize: strip trailing dots from names/targets (some implementations include them)
-    const strip = (s) => (typeof s === 'string' && s.endsWith('.') ? s.slice(0, -1) : s);
-    const allRecords = [...(response.answers || []), ...(response.additionals || [])].map(r => {
-      const n = { ...r, name: strip(r.name) };
-      if (r.type === 'PTR' && r.data)            n.data = strip(r.data);
-      if (r.type === 'SRV' && r.data?.target)    n.data = { ...r.data, target: strip(r.data.target) };
-      if (r.type === 'A'   && r.name)            {} // already stripped via name
-      return n;
-    });
+    const allRecords = [...(response.answers || []), ...(response.additionals || [])];
+    // Strip trailing dot from a string (some mDNS stacks include it)
+    const sd = (s) => (typeof s === 'string' && s.endsWith('.') ? s.slice(0, -1) : s);
 
-    // Index A records: hostname → ip
+    // Index A records: hostname (stripped) → ip
     const aRecords = {};
     for (const r of allRecords) {
-      if (r.type === 'A' && r.data) aRecords[r.name] = r.data;
+      if (r.type === 'A' && r.data) aRecords[sd(r.name)] = r.data;
     }
 
     // Process PTR records
     for (const r of allRecords) {
       if (r.type !== 'PTR') continue;
-      const svc = svcByFqdn[r.name];
+      const svc = svcByFqdn[sd(r.name)];
       if (!svc) continue;
 
       // r.data = "InstanceName._type._proto.local"
-      const instanceFqdn = r.data;
+      const instanceFqdn = sd(typeof r.data === 'string' ? r.data : '');
+      if (!instanceFqdn) continue;
       const instanceName = instanceFqdn.replace(`.${svc.type}.local`, '');
       const key = `${svc.type}|${instanceName}`;
 
@@ -284,11 +279,11 @@ function browseMdns(callbacks) {
       if (active.has(key)) continue; // already reported
 
       // Find matching SRV record
-      const srv = allRecords.find(x => x.type === 'SRV' && x.name === instanceFqdn);
-      const txtR = allRecords.find(x => x.type === 'TXT' && x.name === instanceFqdn);
+      const srv = allRecords.find(x => x.type === 'SRV' && sd(x.name) === instanceFqdn);
+      const txtR = allRecords.find(x => x.type === 'TXT' && sd(x.name) === instanceFqdn);
 
       const port = srv ? (srv.data.port || 0) : 0;
-      const host = srv ? srv.data.target : null;
+      const host = srv ? sd(srv.data.target) : null;
 
       // Parse TXT
       const txt = {};
@@ -300,17 +295,17 @@ function browseMdns(callbacks) {
         }
       }
 
-      if (host && aRecords[host]) {
+      if (host && aRecords[sd(host)]) {
         // All info available inline
-        const ip = aRecords[host];
+        const ip = aRecords[sd(host)];
         active.set(key, { name: instanceName, type: svc.type });
         onUp({ name: instanceName, type: svc.type, host, addresses: [ip], port, txt, family: svc.family });
       } else if (host) {
         // SRV found but no A record yet — query A directly via mDNS (avoids avahi/D-Bus)
         if (!pending.has(key)) {
-          pending.set(key, { svc, instanceName, host, port, txt });
+          pending.set(key, { svc, instanceName, host: sd(host), port, txt });
         }
-        try { mdns.query({ questions: [{ name: host, type: 'A' }] }); } catch (_) {}
+        try { mdns.query({ questions: [{ name: sd(host), type: 'A' }] }); } catch (_) {}
       } else {
         // PTR only — no SRV yet, query SRV+TXT
         if (!pending.has(key)) {
@@ -332,12 +327,12 @@ function browseMdns(callbacks) {
       // If host was unknown (PTR-only), check if SRV arrived now
       if (!info.host) {
         const instanceFqdn = `${info.instanceName}.${info.svc.type}.local`;
-        const srv = allRecords.find(x => x.type === 'SRV' && x.name === instanceFqdn);
+        const srv = allRecords.find(x => x.type === 'SRV' && sd(x.name) === instanceFqdn);
         if (srv) {
-          info.host = srv.data.target;
+          info.host = sd(srv.data.target);
           info.port = srv.data.port || 0;
           // Also pick up TXT if present
-          const txtR = allRecords.find(x => x.type === 'TXT' && x.name === instanceFqdn);
+          const txtR = allRecords.find(x => x.type === 'TXT' && sd(x.name) === instanceFqdn);
           if (txtR && Array.isArray(txtR.data)) {
             for (const buf of txtR.data) {
               const str = Buffer.isBuffer(buf) ? buf.toString() : String(buf);
@@ -352,11 +347,11 @@ function browseMdns(callbacks) {
       }
 
       // Host known — check if A record has arrived
-      if (aRecords[info.host]) {
+      if (aRecords[sd(info.host)]) {
         pending.delete(key);
         active.set(key, { name: info.instanceName, type: info.svc.type });
         onUp({ name: info.instanceName, type: info.svc.type, host: info.host,
-          addresses: [aRecords[info.host]], port: info.port, txt: info.txt, family: info.svc.family });
+          addresses: [aRecords[sd(info.host)]], port: info.port, txt: info.txt, family: info.svc.family });
       }
     }
   });
