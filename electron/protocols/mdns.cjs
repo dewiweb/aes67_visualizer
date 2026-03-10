@@ -245,7 +245,15 @@ function browseMdns(callbacks) {
 
   mdns.on('response', (response) => {
     // Collect all records from answer + additional sections
-    const allRecords = [...(response.answers || []), ...(response.additionals || [])];
+    // Normalize: strip trailing dots from names/targets (some implementations include them)
+    const strip = (s) => (typeof s === 'string' && s.endsWith('.') ? s.slice(0, -1) : s);
+    const allRecords = [...(response.answers || []), ...(response.additionals || [])].map(r => {
+      const n = { ...r, name: strip(r.name) };
+      if (r.type === 'PTR' && r.data)            n.data = strip(r.data);
+      if (r.type === 'SRV' && r.data?.target)    n.data = { ...r.data, target: strip(r.data.target) };
+      if (r.type === 'A'   && r.name)            {} // already stripped via name
+      return n;
+    });
 
     // Index A records: hostname → ip
     const aRecords = {};
