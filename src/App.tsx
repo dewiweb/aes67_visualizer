@@ -56,8 +56,8 @@ const App: React.FC = () => {
   const [interfaces, setInterfaces] = useState<NetworkInterface[]>([]);
   const [currentInterface, setCurrentInterface] = useState<NetworkInterface | null>(null);
   const [settings, setSettings] = useState<Settings>({
-    bufferSize: 16,
-    bufferEnabled: true,
+    bufferSize: 4,
+    bufferEnabled: false,
     hideUnsupported: true,
     sdpDeleteTimeout: 300,
     language: 'en',
