@@ -1,6 +1,6 @@
 {
   "name": "aes67-visualizer",
-  "version": "1.4.7",
+  "version": "1.4.8",
   "description": "AES67/ST2110-30/RAVENNA Audio-over-IP Stream Visualizer",
   "author": "AES67 Vizu",
   "license": "MIT",

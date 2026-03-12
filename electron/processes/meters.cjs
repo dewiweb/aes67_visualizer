@@ -62,10 +62,7 @@ let currentInterface = null;
 function startMonitoring(stream) {
   const { id, mcast, port, channels, codec } = stream;
   
-  if (monitors.has(id)) {
-    console.log(`[Meters] Already monitoring ${id}`);
-    return;
-  }
+  if (monitors.has(id)) return;
 
   if (!currentInterface) {
     console.warn('[Meters] No interface set');

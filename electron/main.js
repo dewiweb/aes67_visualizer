@@ -38,8 +38,8 @@ function safeSend(proc, msg) {
 // Persistent data
 let persistentData = store.get('persistentData', {
   settings: {
-    bufferSize: 16,
-    bufferEnabled: true,
+    bufferSize: 4,
+    bufferEnabled: false,
     hideUnsupported: true,
     sdpDeleteTimeout: 300,
     language: 'en',
