@@ -107,13 +107,14 @@ function start(args) {
   const RING_SIZE    = 64;  // ring buffer slots (power of 2)
   const samplesPerPacket = Math.round((args.sampleRate / 1000) * parseFloat(args.ptime));
   const bytesPerSample   = args.codec === 'L24' ? 3 : 2;
-  const pcmDataSize      = samplesPerPacket * bytesPerSample * args.channels;
-  const frameBytes       = samplesPerPacket * 4; // always stereo S16LE out
+  // +2 sample margin per slot: fractional ptime (e.g. 0.666ms) can yield 32 or 33 samples
+  const maxSamplesPerSlot = samplesPerPacket + 2;
+  const frameBytes        = maxSamplesPerSlot * 4; // stereo S16LE, worst-case slot size
 
-  // Jitter buffer: small ring of PCM frames + a filled-flag per slot
-  // Slots are keyed by seqNum % RING_SIZE — avoids the stale-read repeat bug.
-  const ring      = Buffer.alloc(frameBytes * RING_SIZE); // zeroed = silence
-  const ringFill  = new Uint8Array(RING_SIZE);            // 0=empty, 1=filled
+  // Jitter buffer: ring of PCM slots + fill-flag + actual sample count per slot
+  const ring         = Buffer.alloc(frameBytes * RING_SIZE); // zeroed = silence
+  const ringFill     = new Uint8Array(RING_SIZE);             // 0=empty, 1=filled
+  const ringActual   = new Uint16Array(RING_SIZE).fill(samplesPerPacket); // samples in slot
 
   let jitterBufferSize = args.bufferEnabled ? Math.max(2, args.bufferSize) : 2;
   jitterBufferSize = Math.min(jitterBufferSize, RING_SIZE >> 1);
@@ -138,15 +139,21 @@ function start(args) {
       headerLength += 4 + extensionLength * 4;
     }
 
-    if (buffer.length !== pcmDataSize + headerLength) return;
+    const payloadLength = buffer.length - headerLength;
+    // Accept packets whose payload is a multiple of one interleaved frame (all channels × bytesPerSample)
+    // Strict equality breaks on fractional ptime (e.g. 0.666ms → 32 or 33 samples depending on sender)
+    const frameSize = bytesPerSample * args.channels;
+    if (payloadLength <= 0 || payloadLength % frameSize !== 0) return;
+    const actualSamples = payloadLength / frameSize;
     if (args.filter && remote.address !== args.filterAddr) return;
 
     const seqNum  = buffer.readUInt16BE(2);
     const slot    = seqNum & (RING_SIZE - 1); // fast modulo (power of 2)
     const slotOff = slot * frameBytes;
+    ringActual[slot] = actualSamples; // store real sample count for this slot
 
-    // Decode into ring slot
-    for (let s = 0; s < samplesPerPacket; s++) {
+    // Decode into ring slot — use actualSamples (real packet) not samplesPerPacket (ptime estimate)
+    for (let s = 0; s < actualSamples; s++) {
       ring.writeUInt16LE(
         buffer.readUInt16BE((s * args.channels + args.ch1Map) * bytesPerSample + headerLength),
         slotOff + s * 4
@@ -161,7 +168,7 @@ function start(args) {
     if (nextSeq === -1) {
       // First packet: prime the jitter buffer with silence then start
       nextSeq = (seqNum - jitterBufferSize + 65536) & 0xFFFF;
-      const silence = Buffer.alloc(frameBytes);
+      const silence = Buffer.alloc(actualSamples * 4);
       for (let j = 0; j < jitterBufferSize; j++) {
         try { rtAudio.write(silence); } catch (_) {}
       }
@@ -170,11 +177,12 @@ function start(args) {
     // Drain slots up to (but not including) current seqNum
     let drained = 0;
     while (nextSeq !== seqNum && drained < RING_SIZE) {
-      const ns  = nextSeq & (RING_SIZE - 1);
-      const off = ns * frameBytes;
+      const ns      = nextSeq & (RING_SIZE - 1);
+      const off     = ns * frameBytes;
+      const nBytes  = ringActual[ns] * 4;
       // Write slot data if filled, else silence (missing packet concealment)
       try {
-        rtAudio.write(ringFill[ns] ? ring.subarray(off, off + frameBytes) : Buffer.alloc(frameBytes));
+        rtAudio.write(ringFill[ns] ? ring.subarray(off, off + nBytes) : Buffer.alloc(nBytes));
       } catch (_) {}
       ringFill[ns] = 0;
       nextSeq = (nextSeq + 1) & 0xFFFF;
@@ -183,7 +191,7 @@ function start(args) {
 
     // Output the current packet
     try {
-      rtAudio.write(ring.subarray(slotOff, slotOff + frameBytes));
+      rtAudio.write(ring.subarray(slotOff, slotOff + actualSamples * 4));
     } catch (_) {}
     ringFill[slot] = 0;
     nextSeq = (seqNum + 1) & 0xFFFF;
