@@ -119,10 +119,18 @@ function start(args) {
   let jitterBufferSize = args.bufferEnabled ? Math.max(2, args.bufferSize) : 2;
   jitterBufferSize = Math.min(jitterBufferSize, RING_SIZE >> 1);
 
-  // Minimum samples per RtAudio write (RtAudio requirement)
+  // RtAudio requires writes of exactly streamFrames stereo samples
+  // For fractional ptime (e.g. 0.666ms → 32 or 33 samples) we accumulate into
+  // an output buffer and flush only when a full streamFrames block is ready.
   let outSampleFactor = 1;
   while (samplesPerPacket * outSampleFactor < 48) outSampleFactor++;
   outSampleFactor = Math.min(outSampleFactor, 4); // cap at 4×
+  const streamFrames = samplesPerPacket * outSampleFactor;
+  const streamBytes  = streamFrames * 4; // stereo S16LE
+
+  // Output accumulator: collect decoded stereo S16LE samples before writing to RtAudio
+  const outBuf  = Buffer.alloc(streamBytes * 2); // 2× to avoid wrapping issues
+  let outPos = 0; // samples accumulated so far
 
   let nextSeq = -1; // next expected sequence number (-1 = not started)
 
@@ -165,12 +173,24 @@ function start(args) {
     }
     ringFill[slot] = 1;
 
+    // Helper: push decoded stereo samples into accumulator, flush to RtAudio in streamFrames-sized chunks
+    function pushSamples(src, nSamples) {
+      const srcBytes = nSamples * 4;
+      src.copy(outBuf, outPos * 4, 0, srcBytes);
+      outPos += nSamples;
+      while (outPos >= streamFrames) {
+        try { rtAudio.write(outBuf.subarray(0, streamBytes)); } catch (_) {}
+        // Shift remaining samples to front
+        outBuf.copy(outBuf, 0, streamBytes, outPos * 4);
+        outPos -= streamFrames;
+      }
+    }
+
     if (nextSeq === -1) {
       // First packet: prime the jitter buffer with silence then start
       nextSeq = (seqNum - jitterBufferSize + 65536) & 0xFFFF;
-      const silence = Buffer.alloc(actualSamples * 4);
       for (let j = 0; j < jitterBufferSize; j++) {
-        try { rtAudio.write(silence); } catch (_) {}
+        pushSamples(Buffer.alloc(actualSamples * 4), actualSamples);
       }
     }
 
@@ -181,18 +201,15 @@ function start(args) {
       const off     = ns * frameBytes;
       const nBytes  = ringActual[ns] * 4;
       // Write slot data if filled, else silence (missing packet concealment)
-      try {
-        rtAudio.write(ringFill[ns] ? ring.subarray(off, off + nBytes) : Buffer.alloc(nBytes));
-      } catch (_) {}
+      const slotData = ringFill[ns] ? ring.subarray(off, off + nBytes) : Buffer.alloc(nBytes);
+      pushSamples(slotData, ringActual[ns]);
       ringFill[ns] = 0;
       nextSeq = (nextSeq + 1) & 0xFFFF;
       drained++;
     }
 
     // Output the current packet
-    try {
-      rtAudio.write(ring.subarray(slotOff, slotOff + actualSamples * 4));
-    } catch (_) {}
+    pushSamples(ring.subarray(slotOff, slotOff + actualSamples * 4), actualSamples);
     ringFill[slot] = 0;
     nextSeq = (seqNum + 1) & 0xFFFF;
   });
@@ -228,7 +245,6 @@ function start(args) {
   }
 
   try {
-    const streamFrames = samplesPerPacket * outSampleFactor;
     console.log(`[Audio] API=${getAudioApi()} device=${deviceId} frames=${streamFrames} sr=${args.sampleRate} jitter=${jitterBufferSize}`);
     rtAudio.openStream(
       { deviceId, nChannels: 2, firstChannel: 0 },
