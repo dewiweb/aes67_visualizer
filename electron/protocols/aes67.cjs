@@ -78,7 +78,7 @@ function validateSdp(sdp, raw) {
   sdp.sampleRate = rtp.rate;
   sdp.channels   = rtp.encoding;
   sdp.port       = media.port;
-  sdp.ptime      = media.ptime || 1; // AES67 default packet time: 1ms
+  sdp.ptime      = parseFloat(media.ptime) || 1; // AES67 default packet time: 1ms
 
   // ── Origin (device IP, session ID) ────────────────────────────────────────
   if (sdp.origin) {

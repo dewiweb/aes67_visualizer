@@ -105,7 +105,7 @@ function start(args) {
 
   // Audio parameters
   const RING_SIZE    = 64;  // ring buffer slots (power of 2)
-  const samplesPerPacket = Math.round((args.sampleRate / 1000) * args.ptime);
+  const samplesPerPacket = Math.round((args.sampleRate / 1000) * parseFloat(args.ptime));
   const bytesPerSample   = args.codec === 'L24' ? 3 : 2;
   const pcmDataSize      = samplesPerPacket * bytesPerSample * args.channels;
   const frameBytes       = samplesPerPacket * 4; // always stereo S16LE out
