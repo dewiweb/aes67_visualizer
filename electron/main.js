@@ -46,7 +46,22 @@ let persistentData = store.get('persistentData', {
   },
 });
 
-let currentNetworkInterface = store.get('interface') || null;
+// Validate stored interface against actual interfaces — IP may not exist on this machine
+// (e.g. AppImage moved to a different machine with a different IP)
+let currentNetworkInterface = null;
+{
+  const stored = store.get('interface') || null;
+  if (stored) {
+    const ifaces = getNetworkInterfaces();
+    const valid = ifaces.find(i => i.address === stored.address);
+    if (valid) {
+      currentNetworkInterface = stored;
+    } else {
+      console.log(`[Main] Stored interface ${stored.address} not found on this machine — discarding`);
+      store.delete('interface');
+    }
+  }
+}
 let currentAudioDevice = store.get('audioInterface');
 
 /**
