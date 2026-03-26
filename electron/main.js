@@ -46,28 +46,45 @@ let persistentData = store.get('persistentData', {
   },
 });
 
-// Resolve stored interface name against current machine's actual interfaces.
-// We store only the interface *name* (e.g. "eth0", "Ethernet") so that:
-//  - DHCP IP changes on the same machine are handled transparently
-//  - Moving an AppImage to a different machine discards stale IPs
+// Resolve stored interface at startup against current machine's actual interfaces.
+// Strategy (in order):
+//  1. name + address match  → exact restore (same machine, static IP or same DHCP lease)
+//  2. name match only       → DHCP changed on same NIC; pick the stored address's entry or first of that NIC
+//  3. no match              → different machine or NIC renamed; auto-select first available
+// We store { name, address } so multi-homed interfaces (multiple IPs on same NIC) are handled correctly.
 let currentNetworkInterface = null;
 {
-  const storedName = store.get('interfaceName') || null;
-  // Legacy: migrate old full-object store key to name-only
-  if (!storedName) {
-    const legacy = store.get('interface') || null;
-    if (legacy?.name) store.set('interfaceName', legacy.name);
+  // Migrate legacy full-object 'interface' key to new 'interfaceName'/'interfaceAddress' keys
+  const legacy = store.get('interface') || null;
+  if (legacy?.name && !store.get('interfaceName')) {
+    store.set('interfaceName',    legacy.name);
+    store.set('interfaceAddress', legacy.address);
     store.delete('interface');
   }
+
+  const storedName    = store.get('interfaceName')    || null;
+  const storedAddress = store.get('interfaceAddress') || null;
+
   if (storedName) {
     const ifaces = getNetworkInterfaces();
-    const match = ifaces.find(i => i.name === storedName);
-    if (match) {
-      currentNetworkInterface = match;
-      console.log(`[Main] Restored interface ${match.name} → ${match.address}`);
+    // 1. Exact match: same NIC name + same IP
+    const exact = ifaces.find(i => i.name === storedName && i.address === storedAddress);
+    if (exact) {
+      currentNetworkInterface = exact;
+      console.log(`[Main] Restored interface ${exact.name} → ${exact.address}`);
     } else {
-      console.log(`[Main] Stored interface "${storedName}" not found on this machine — will auto-select`);
-      store.delete('interfaceName');
+      // 2. NIC name matches but IP differs (DHCP change) — pick first IP on that NIC
+      const byName = ifaces.find(i => i.name === storedName);
+      if (byName) {
+        currentNetworkInterface = byName;
+        console.log(`[Main] Interface ${byName.name} IP changed (was ${storedAddress}) → ${byName.address}`);
+        store.set('interfaceAddress', byName.address);
+      } else {
+        // 3. NIC not found on this machine
+        console.log(`[Main] Stored interface "${storedName}" not found on this machine — will auto-select`);
+        store.delete('interfaceName');
+        store.delete('interfaceAddress');
+      }
     }
   }
 }
@@ -372,8 +389,9 @@ function setupIpcHandlers() {
     
     if (iface) {
       currentNetworkInterface = iface;
-      store.set('interfaceName', iface.name);  // store name only — IP resolved at next startup
-      store.delete('interface');               // remove legacy full-object key
+      store.set('interfaceName',    iface.name);    // name+address stored — see startup resolution logic
+      store.set('interfaceAddress', iface.address);
+      store.delete('interface');                    // remove legacy full-object key
       
       // Reinitialize SDP with new interface (full restart)
       safeSend(sdpProcess,    { type: 'init',          address });
@@ -497,7 +515,8 @@ app.whenReady().then(() => {
     const ifaces = getNetworkInterfaces();
     if (ifaces.length > 0) {
       currentNetworkInterface = ifaces[0];
-      store.set('interfaceName', currentNetworkInterface.name);
+      store.set('interfaceName',    currentNetworkInterface.name);
+      store.set('interfaceAddress', currentNetworkInterface.address);
       store.delete('interface');
       console.log(`[Main] Auto-selected interface: ${currentNetworkInterface.name} → ${currentNetworkInterface.address}`);
     }
