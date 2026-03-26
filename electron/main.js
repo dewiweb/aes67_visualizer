@@ -46,19 +46,28 @@ let persistentData = store.get('persistentData', {
   },
 });
 
-// Validate stored interface against actual interfaces — IP may not exist on this machine
-// (e.g. AppImage moved to a different machine with a different IP)
+// Resolve stored interface name against current machine's actual interfaces.
+// We store only the interface *name* (e.g. "eth0", "Ethernet") so that:
+//  - DHCP IP changes on the same machine are handled transparently
+//  - Moving an AppImage to a different machine discards stale IPs
 let currentNetworkInterface = null;
 {
-  const stored = store.get('interface') || null;
-  if (stored) {
+  const storedName = store.get('interfaceName') || null;
+  // Legacy: migrate old full-object store key to name-only
+  if (!storedName) {
+    const legacy = store.get('interface') || null;
+    if (legacy?.name) store.set('interfaceName', legacy.name);
+    store.delete('interface');
+  }
+  if (storedName) {
     const ifaces = getNetworkInterfaces();
-    const valid = ifaces.find(i => i.address === stored.address);
-    if (valid) {
-      currentNetworkInterface = stored;
+    const match = ifaces.find(i => i.name === storedName);
+    if (match) {
+      currentNetworkInterface = match;
+      console.log(`[Main] Restored interface ${match.name} → ${match.address}`);
     } else {
-      console.log(`[Main] Stored interface ${stored.address} not found on this machine — discarding`);
-      store.delete('interface');
+      console.log(`[Main] Stored interface "${storedName}" not found on this machine — will auto-select`);
+      store.delete('interfaceName');
     }
   }
 }
@@ -363,7 +372,8 @@ function setupIpcHandlers() {
     
     if (iface) {
       currentNetworkInterface = iface;
-      store.set('interface', iface);
+      store.set('interfaceName', iface.name);  // store name only — IP resolved at next startup
+      store.delete('interface');               // remove legacy full-object key
       
       // Reinitialize SDP with new interface (full restart)
       safeSend(sdpProcess,    { type: 'init',          address });
@@ -482,13 +492,14 @@ app.whenReady().then(() => {
   setupIpcHandlers();
   checkPrivilegedPorts();
 
-  // Auto-select first interface if none saved
+  // Auto-select first interface if none resolved
   if (!currentNetworkInterface) {
     const ifaces = getNetworkInterfaces();
     if (ifaces.length > 0) {
       currentNetworkInterface = ifaces[0];
-      store.set('interface', currentNetworkInterface);
-      console.log(`[Main] Auto-selected interface: ${currentNetworkInterface.address}`);
+      store.set('interfaceName', currentNetworkInterface.name);
+      store.delete('interface');
+      console.log(`[Main] Auto-selected interface: ${currentNetworkInterface.name} → ${currentNetworkInterface.address}`);
     }
   }
 
