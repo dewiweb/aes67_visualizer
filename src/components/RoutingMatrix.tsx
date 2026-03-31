@@ -190,14 +190,28 @@ const RoutingMatrix: React.FC<RoutingMatrixProps> = ({ devices }) => {
     return groups;
   }, [txCols]);
 
-  // ── Active crosspoints Set — O(RX) build, O(1) lookup ──────────────────────
+  // ── Active crosspoints Set — keyed exactly as cellKey in render ─────────────
+  // cellKey = `${rxIp}:${rxChId}:${col.deviceName}:${col.chName}`
+  // We must match col.deviceName (from txChannelNames) with row.txHost (from ARC binary).
+  // Build a fast lookup: for each subscribed RX row, find the matching TX col by
+  // comparing txHost→deviceName and txChannelName→chName (case-insensitive trim).
   const activeSet = useMemo(() => {
     const s = new Set<string>();
-    for (const row of allRxRows)
-      if (row.subscribed && row.txHost && row.txChannelName)
-        s.add(`${row.deviceIp}:${row.chId}:${row.txHost}:${row.txChannelName}`);
+    // Build txCol lookup: (deviceName.toLowerCase(), chName.toLowerCase()) → col
+    const txColMap = new Map<string, TxCol>();
+    for (const col of txCols)
+      txColMap.set(`${col.deviceName.toLowerCase().trim()}:${col.chName.toLowerCase().trim()}`, col);
+
+    for (const row of allRxRows) {
+      if (!row.subscribed || !row.txHost || !row.txChannelName) continue;
+      const lookupKey = `${row.txHost.toLowerCase().trim()}:${row.txChannelName.toLowerCase().trim()}`;
+      const matchedCol = txColMap.get(lookupKey);
+      if (matchedCol) {
+        s.add(`${row.deviceIp}:${row.chId}:${matchedCol.deviceName}:${matchedCol.chName}`);
+      }
+    }
     return s;
-  }, [allRxRows]);
+  }, [allRxRows, txCols]);
 
   // ── Cell dispatch map — only for visible (filtered) TX cols ────────────────
   const cellMap = useMemo(() => {

@@ -422,9 +422,8 @@ async function probeArcIp(ip) {
     }
     if (rxChs.length > 0) {
       const subscribed = rxChs.filter(c => c.subscribed);
-      if (subscribed.length > 0) {
-        console.log(`[ARC Probe] ${ip} RX subs: ${subscribed.slice(0, 4).map(c => `${c.name}<-${c.txHost || '?'}`).join(', ')}`);
-      }
+      if (subscribed.length > 0)
+        console.log(`[ARC Probe] ${ip} RX subs: ${subscribed.slice(0,3).map(c => `${c.name}<-${c.txHost || '?'}.${c.txChannelName || '?'}`).join(', ')}`);
     }
     upsert(ip, {
       txChannelNames: txChs.length > 0 ? txChs : undefined,
