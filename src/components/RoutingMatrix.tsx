@@ -110,7 +110,7 @@ const RoutingMatrix: React.FC<RoutingMatrixProps> = ({ devices }) => {
   const [pendingCell, setPendingCell] = useState<string | null>(null);
   const [toast, setToast]             = useState<ToastMsg | null>(null);
   const [rxFilter, setRxFilter]       = useState('');
-  const [txDeviceFilter, setTxDeviceFilter] = useState<string>('__all__');
+  const [txDeviceFilter, setTxDeviceFilter] = useState<string | null>(null); // null = use first device once known
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -132,12 +132,15 @@ const RoutingMatrix: React.FC<RoutingMatrixProps> = ({ devices }) => {
     return names;
   }, [danteDevices]);
 
+  // ── Effective TX device filter — default to first TX device ─────────────────
+  const effectiveTxFilter = txDeviceFilter ?? txDeviceNames[0] ?? '__all__';
+
   // ── Flat TX column list — filtered by selected TX device, deduplicated ──────
   const txCols = useMemo<TxCol[]>(() => {
     const seen = new Set<string>();
     const cols: TxCol[] = [];
     for (const d of danteDevices) {
-      if (txDeviceFilter !== '__all__' && d.name !== txDeviceFilter) continue;
+      if (effectiveTxFilter !== '__all__' && d.name !== effectiveTxFilter) continue;
       for (const ch of d.txChannelNames || []) {
         const k = `${d.ip}:${ch.id}`;
         if (seen.has(k)) continue;
@@ -146,7 +149,7 @@ const RoutingMatrix: React.FC<RoutingMatrixProps> = ({ devices }) => {
       }
     }
     return cols;
-  }, [danteDevices, txDeviceFilter]);
+  }, [danteDevices, effectiveTxFilter]);
 
   // ── Flat RX row list — deduplicated ────────────────────────────────────────
   const allRxRows = useMemo<RxRow[]>(() => {
@@ -213,16 +216,6 @@ const RoutingMatrix: React.FC<RoutingMatrixProps> = ({ devices }) => {
     return s;
   }, [allRxRows, txCols]);
 
-  // ── Cell dispatch map — only for visible (filtered) TX cols ────────────────
-  const cellMap = useMemo(() => {
-    const m = new Map<string, { row: RxRow; col: TxCol; active: boolean }>();
-    for (const row of rxRows)
-      for (const col of txCols) {
-        const key = `${row.deviceIp}:${row.chId}:${col.deviceName}:${col.chName}`;
-        m.set(key, { row, col, active: activeSet.has(key) });
-      }
-    return m;
-  }, [rxRows, txCols, activeSet]);
 
   // ── Virtualiser ─────────────────────────────────────────────────────────────
   const virtualiser = useVirtualizer({
@@ -238,13 +231,25 @@ const RoutingMatrix: React.FC<RoutingMatrixProps> = ({ devices }) => {
     setTimeout(() => setToast(null), 3000);
   }, []);
 
+  // Stable Maps for O(1) row/col lookup by key in onClickCell
+  const rxRowMap = useMemo(() => {
+    const m = new Map<string, RxRow>();
+    for (const row of rxRows) m.set(`${row.deviceIp}:${row.chId}`, row);
+    return m;
+  }, [rxRows]);
+
   const onClickCell = useCallback(async (cellKey: string) => {
     if (safeMode) { setShowUnlock(true); return; }
     if (!window.api) return;
-    const entry = cellMap.get(cellKey);
-    if (!entry) return;
-    const { row, col, active } = entry;
     if (pendingCell === cellKey) return;
+    // cellKey = `${rxIp}:${rxChId}:${colDeviceName}:${colChName}` (IPv4 only)
+    const ipMatch = cellKey.match(/^(\d+\.\d+\.\d+\.\d+):(\d+):(.+):(.+)$/);
+    if (!ipMatch) return;
+    const [, rxIp, rxChIdStr, colDeviceName, colChName] = ipMatch;
+    const row = rxRowMap.get(`${rxIp}:${rxChIdStr}`);
+    const col = txCols.find(c => c.deviceName === colDeviceName && c.chName === colChName);
+    if (!row || !col) return;
+    const active = activeSet.has(cellKey);
     setPendingCell(cellKey);
     try {
       if (active) {
@@ -261,7 +266,7 @@ const RoutingMatrix: React.FC<RoutingMatrixProps> = ({ devices }) => {
     } finally {
       setPendingCell(null);
     }
-  }, [safeMode, pendingCell, cellMap, showToast]);
+  }, [safeMode, pendingCell, rxRowMap, txCols, activeSet, showToast]);
 
   // ── Empty states ────────────────────────────────────────────────────────────
   if (danteDevices.length === 0) {
@@ -310,13 +315,14 @@ const RoutingMatrix: React.FC<RoutingMatrixProps> = ({ devices }) => {
         <div className="flex items-center gap-1.5 shrink-0">
           <span className="text-xs text-slate-500">TX:</span>
           <select
-            value={txDeviceFilter}
+            value={effectiveTxFilter}
             onChange={e => setTxDeviceFilter(e.target.value)}
             className="text-xs bg-slate-800 border border-slate-600 rounded px-2 py-0.5 text-slate-200 focus:outline-none focus:border-purple-500 max-w-[180px]"
           >
-            <option value="__all__">All devices ({txCols.length} ch)</option>
+            <option value="__all__">All TX ({danteDevices.reduce((s,d)=>(s+(d.txChannelNames||[]).length),0)} ch) ⚠️ slow</option>
             {txDeviceNames.map(n => {
-              const count = txCols.filter(c => c.deviceName === n).length;
+              const d = danteDevices.find(x => x.name === n);
+              const count = (d?.txChannelNames || []).length;
               return <option key={n} value={n}>{n} ({count} ch)</option>;
             })}
           </select>
