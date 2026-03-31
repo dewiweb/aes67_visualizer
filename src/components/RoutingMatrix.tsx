@@ -306,9 +306,9 @@ const RoutingMatrix: React.FC<RoutingMatrixProps> = ({ devices }) => {
                 : row.statusText === 'Dangling' ? 'text-red-400'
                 : 'text-slate-600';
               return (
-                <React.Fragment key={`${row.deviceIp}:${row.chId}`}>
+                <React.Fragment key={`rx:${row.deviceIp}:${row.chId}`}>
                   {isNewDevice && (
-                    <tr className="bg-slate-800/60">
+                    <tr key={`dh:${row.deviceIp}`} className="bg-slate-800/60">
                       <td
                         colSpan={2 + txCols.length}
                         className="sticky left-0 px-2 py-0.5 text-[10px] font-semibold text-purple-400 border-t border-slate-700"
