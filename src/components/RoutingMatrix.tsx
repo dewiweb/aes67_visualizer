@@ -12,8 +12,8 @@
  * Safe Mode is ON by default — user must unlock explicitly.
  */
 
-import React, { useState, useCallback, useMemo } from 'react';
-import { Lock, Unlock, RefreshCw, AlertTriangle, CheckCircle2, Circle } from 'lucide-react';
+import React, { useState, useCallback, useMemo, memo } from 'react';
+import { Lock, Unlock, RefreshCw, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { NetworkDevice } from '../types';
 
 interface RoutingMatrixProps {
@@ -62,108 +62,139 @@ const UnlockModal: React.FC<UnlockModalProps> = ({ onConfirm, onCancel }) => {
   );
 };
 
-// ─── Feedback toast ───────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-interface ToastProps {
-  message: string;
-  ok: boolean;
+interface ToastMsg { message: string; ok: boolean; }
+
+interface TxCol {
+  deviceName: string; deviceIp: string; chId: number; chName: string;
 }
+interface RxRow {
+  deviceName: string; deviceIp: string; arcPort: number | null;
+  chId: number; chName: string;
+  txChannelName: string | null; txHost: string | null;
+  subscribed: boolean; statusText: string;
+}
+
+// ─── Memoized cell — only re-renders when active/loading/title change ────────
+// onClick is passed as a stable ref to avoid memo invalidation.
+
+interface CellProps {
+  active: boolean;
+  loading: boolean;
+  title: string;
+  cellKey: string;
+  onClickCell: (key: string) => void;
+}
+const MatrixCell = memo(({ active, loading, title, cellKey, onClickCell }: CellProps) => (
+  <td
+    onClick={() => onClickCell(cellKey)}
+    title={title}
+    className={`border-b border-r border-slate-700/40 text-center cursor-pointer w-8 h-7
+      ${active   ? 'bg-purple-800/60 hover:bg-red-900/60' : 'hover:bg-purple-900/20'}
+      ${loading  ? 'bg-amber-900/40' : ''}
+    `}
+  >
+    <div className="flex items-center justify-center h-7">
+      {loading
+        ? <RefreshCw size={10} className="text-amber-400 animate-spin" />
+        : active
+          ? <CheckCircle2 size={12} className="text-purple-300" />
+          : null
+      }
+    </div>
+  </td>
+));
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
 const RoutingMatrix: React.FC<RoutingMatrixProps> = ({ devices }) => {
   const [safeMode, setSafeMode]       = useState(true);
   const [showUnlock, setShowUnlock]   = useState(false);
-  const [pendingCell, setPendingCell] = useState<string | null>(null); // "rxIp:rxId:txDeviceName:txChName"
-  const [toast, setToast]             = useState<ToastProps | null>(null);
+  const [pendingCell, setPendingCell] = useState<string | null>(null);
+  const [toast, setToast]             = useState<ToastMsg | null>(null);
 
-  // Filter to Dante-only devices with channel data
+  // Filter to Dante-only devices
   const danteDevices = useMemo(
     () => devices.filter(d => d.isDante && !d.isRAVENNA),
     [devices],
   );
 
-  // Build flat TX channel list: [{ deviceName, deviceIp, chId, chName }]
-  const txCols = useMemo(() => {
-    const cols: { deviceName: string; deviceIp: string; chId: number; chName: string }[] = [];
-    for (const d of danteDevices) {
-      for (const ch of d.txChannelNames || []) {
+  // Flat TX column list
+  const txCols = useMemo<TxCol[]>(() => {
+    const cols: TxCol[] = [];
+    for (const d of danteDevices)
+      for (const ch of d.txChannelNames || [])
         cols.push({ deviceName: d.name, deviceIp: d.ip, chId: ch.id, chName: ch.name || `ch${ch.id}` });
-      }
-    }
     return cols;
   }, [danteDevices]);
 
-  // Build flat RX channel list: [{ deviceName, deviceIp, arcPort, chId, chName, txChannelName, txHost, subscribed, statusText }]
-  const rxRows = useMemo(() => {
-    const rows: {
-      deviceName: string; deviceIp: string; arcPort: number | null;
-      chId: number; chName: string;
-      txChannelName: string | null; txHost: string | null;
-      subscribed: boolean; statusText: string;
-    }[] = [];
-    for (const d of danteDevices) {
-      for (const ch of d.rxChannelNames || []) {
+  // Flat RX row list
+  const rxRows = useMemo<RxRow[]>(() => {
+    const rows: RxRow[] = [];
+    for (const d of danteDevices)
+      for (const ch of d.rxChannelNames || [])
         rows.push({
-          deviceName:    d.name,
-          deviceIp:      d.ip,
-          arcPort:       null, // default 4440 handled by arc.cjs
-          chId:          ch.id,
-          chName:        ch.name || `ch${ch.id}`,
-          txChannelName: ch.txChannelName || null,
-          txHost:        ch.txHost        || null,
-          subscribed:    ch.subscribed,
-          statusText:    ch.statusText,
+          deviceName: d.name, deviceIp: d.ip, arcPort: null,
+          chId: ch.id, chName: ch.name || `ch${ch.id}`,
+          txChannelName: ch.txChannelName || null, txHost: ch.txHost || null,
+          subscribed: ch.subscribed, statusText: ch.statusText,
         });
-      }
-    }
     return rows;
   }, [danteDevices]);
 
-  // TX device header groups: [{ deviceName, startColIdx, span }]
+  // TX device header groups
   const txDeviceGroups = useMemo(() => {
-    const groups: { deviceName: string; startColIdx: number; span: number }[] = [];
+    const groups: { deviceName: string; span: number }[] = [];
     let i = 0;
     while (i < txCols.length) {
       const name = txCols[i].deviceName;
       let span = 0;
       while (i + span < txCols.length && txCols[i + span].deviceName === name) span++;
-      groups.push({ deviceName: name, startColIdx: i, span });
+      groups.push({ deviceName: name, span });
       i += span;
     }
     return groups;
   }, [txCols]);
 
-  // Check if a crosspoint is active: rx row subscribed to this exact tx col
-  const isCrosspoint = useCallback((row: typeof rxRows[0], col: typeof txCols[0]) => {
-    if (!row.subscribed) return false;
-    // txHost is the Dante device name (hostname without .local.), txChannelName is the TX channel name
-    return row.txChannelName === col.chName && row.txHost === col.deviceName;
-  }, []);
+  // Pre-compute active crosspoints as Set<"rxIp:rxChId:txDeviceName:txChName">
+  // O(RX_count) build, O(1) lookup per cell — avoids per-cell isCrosspoint scan
+  const activeSet = useMemo(() => {
+    const s = new Set<string>();
+    for (const row of rxRows) {
+      if (row.subscribed && row.txHost && row.txChannelName)
+        s.add(`${row.deviceIp}:${row.chId}:${row.txHost}:${row.txChannelName}`);
+    }
+    return s;
+  }, [rxRows]);
 
-  const showToast = (message: string, ok: boolean) => {
+  const showToast = useCallback((message: string, ok: boolean) => {
     setToast({ message, ok });
     setTimeout(() => setToast(null), 3000);
-  };
+  }, []);
 
-  const handleCellClick = useCallback(async (
-    row: typeof rxRows[0],
-    col: typeof txCols[0],
-  ) => {
-    if (safeMode) {
-      setShowUnlock(true);
-      return;
-    }
+  // Map cellKey → {row, col, active} — rebuilt only when rxRows/txCols/activeSet change
+  const cellMap = useMemo(() => {
+    const m = new Map<string, { row: RxRow; col: TxCol; active: boolean }>();
+    for (const row of rxRows)
+      for (const col of txCols) {
+        const key = `${row.deviceIp}:${row.chId}:${col.deviceName}:${col.chName}`;
+        m.set(key, { row, col, active: activeSet.has(key) });
+      }
+    return m;
+  }, [rxRows, txCols, activeSet]);
+
+  // Single stable handler for all cells — keyed dispatch via cellMap
+  const onClickCell = useCallback(async (cellKey: string) => {
+    if (safeMode) { setShowUnlock(true); return; }
     if (!window.api) return;
-
-    const cellKey = `${row.deviceIp}:${row.chId}:${col.deviceName}:${col.chName}`;
+    const entry = cellMap.get(cellKey);
+    if (!entry) return;
+    const { row, col, active } = entry;
     if (pendingCell === cellKey) return;
-
-    const alreadySubscribed = isCrosspoint(row, col);
     setPendingCell(cellKey);
-
     try {
-      if (alreadySubscribed) {
+      if (active) {
         const res = await window.api.arcUnsubscribeRx(row.deviceIp, row.arcPort, row.chId);
         if (res.ok) showToast(`Disconnected ${row.deviceName}.${row.chName}`, true);
         else showToast(`Error: ${res.error || 'unsubscribe failed'}`, false);
@@ -177,7 +208,7 @@ const RoutingMatrix: React.FC<RoutingMatrixProps> = ({ devices }) => {
     } finally {
       setPendingCell(null);
     }
-  }, [safeMode, pendingCell, isCrosspoint]);
+  }, [safeMode, pendingCell, cellMap, showToast]);
 
   // ── Empty state ──────────────────────────────────────────────────────────────
   if (danteDevices.length === 0) {
@@ -268,10 +299,12 @@ const RoutingMatrix: React.FC<RoutingMatrixProps> = ({ devices }) => {
             </tr>
           </thead>
           <tbody>
-            {/* Group rows by RX device — insert device header when name changes */}
             {rxRows.map((row, rowIdx) => {
               const prevDevice = rowIdx > 0 ? rxRows[rowIdx - 1].deviceName : null;
               const isNewDevice = row.deviceName !== prevDevice;
+              const statusColor = row.subscribed ? 'text-green-400'
+                : row.statusText === 'Dangling' ? 'text-red-400'
+                : 'text-slate-600';
               return (
                 <React.Fragment key={`${row.deviceIp}:${row.chId}`}>
                   {isNewDevice && (
@@ -284,48 +317,30 @@ const RoutingMatrix: React.FC<RoutingMatrixProps> = ({ devices }) => {
                       </td>
                     </tr>
                   )}
-                  <tr className="hover:bg-slate-800/40 group">
-                    {/* RX channel name */}
-                    <td className="sticky left-0 z-10 bg-slate-900 group-hover:bg-slate-800/80 border-b border-r border-slate-700/60 px-2 py-1 text-slate-300 whitespace-nowrap min-w-[120px] max-w-[180px] truncate">
+                  <tr>
+                    <td className="sticky left-0 z-10 bg-slate-900 border-b border-r border-slate-700/60 px-2 py-1 text-slate-300 whitespace-nowrap min-w-[120px] max-w-[180px] truncate">
                       {row.chName}
                     </td>
-                    {/* Subscription status */}
-                    <td className={`sticky left-[120px] z-10 bg-slate-900 group-hover:bg-slate-800/80 border-b border-r border-slate-700/60 px-2 py-1 whitespace-nowrap min-w-[80px] ${
-                      row.subscribed ? 'text-green-400' : row.statusText === 'Dangling' ? 'text-red-400' : 'text-slate-600'
-                    }`}>
+                    <td className={`sticky left-[120px] z-10 bg-slate-900 border-b border-r border-slate-700/60 px-2 py-1 whitespace-nowrap min-w-[80px] ${statusColor}`}>
                       {row.subscribed
                         ? `← ${row.txHost || '?'}.${row.txChannelName || '?'}`
-                        : row.statusText === 'Unsubscribed' ? '—' : row.statusText}
+                        : row.statusText === 'Unsubscribed' ? '—' : (row.statusText || '—')}
                     </td>
-                    {/* Crosspoint cells */}
                     {txCols.map(col => {
-                      const active  = isCrosspoint(row, col);
                       const cellKey = `${row.deviceIp}:${row.chId}:${col.deviceName}:${col.chName}`;
+                      const active  = activeSet.has(cellKey);
                       const loading = pendingCell === cellKey;
                       return (
-                        <td
+                        <MatrixCell
                           key={`${col.deviceIp}:${col.chId}`}
-                          onClick={() => handleCellClick(row, col)}
+                          active={active}
+                          loading={loading}
+                          cellKey={cellKey}
                           title={active
                             ? `Disconnect ${row.deviceName}.${row.chName} from ${col.deviceName}.${col.chName}`
                             : `Route ${col.deviceName}.${col.chName} → ${row.deviceName}.${row.chName}`}
-                          className={`border-b border-r border-slate-700/40 text-center cursor-pointer transition-colors
-                            ${active
-                              ? 'bg-purple-800/60 hover:bg-red-900/60'
-                              : 'hover:bg-purple-900/30'
-                            }
-                            ${loading ? 'animate-pulse bg-amber-900/40' : ''}
-                          `}
-                        >
-                          <div className="flex items-center justify-center h-7 w-8">
-                            {loading
-                              ? <RefreshCw size={10} className="text-amber-400 animate-spin" />
-                              : active
-                                ? <CheckCircle2 size={12} className="text-purple-300" />
-                                : <Circle size={8} className="text-slate-700 opacity-0 group-hover:opacity-100" />
-                            }
-                          </div>
-                        </td>
+                          onClickCell={onClickCell}
+                        />
                       );
                     })}
                   </tr>
