@@ -20,6 +20,7 @@ let danteProcess;
 let audioProcess;
 let metersProcess;
 let ptpProcess;
+let conmonProcess;
 
 // Stream storage
 let sapStreams = [];
@@ -368,6 +369,22 @@ function initChildProcesses() {
       sendToRenderer('mdns-error', { code: data.code, message: data.message });
     }
   });
+
+  // Conmon Process (Dante multicast 224.0.0.231:8702 + heartbeat 224.0.0.233:8708)
+  // Spawned after danteProcess so forwarded patches always have a live target.
+  conmonProcess = fork(path.join(__dirname, 'processes/conmon.cjs'));
+  conmonProcess.on('exit', () => { conmonProcess = null; });
+
+  conmonProcess.on('message', (data) => {
+    if (data.type === 'conmon-patch' || data.type === 'conmon-offline') {
+      safeSend(danteProcess, data);
+    }
+  });
+
+  safeSend(conmonProcess, {
+    type: 'start',
+    interface: currentNetworkInterface?.address || null,
+  });
 }
 
 function setupIpcHandlers() {
@@ -397,7 +414,8 @@ function setupIpcHandlers() {
       safeSend(sdpProcess,    { type: 'init',          address });
       safeSend(metersProcess, { type: 'set-interface', address });
       safeSend(ptpProcess,    { type: 'start', interface: address });
-      safeSend(danteProcess, { type: 'refresh' });
+      safeSend(conmonProcess, { type: 'set-interface',  address });
+      safeSend(danteProcess,  { type: 'refresh' });
 
       sendToRenderer('interface-changed', iface);
     }

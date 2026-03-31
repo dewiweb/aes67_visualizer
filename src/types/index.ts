@@ -100,6 +100,20 @@ export interface NetworkDevice {
   ptpGrandmaster: string | null;
   /** MAC address from _netaudio-cmc._udp TXT field 'id' */
   macAddress: string | null;
+  /** AES67 interop mode — current runtime state (from conmon 0x1007) */
+  aes67Current: boolean | null;
+  /** AES67 interop mode — configured state (requires reboot to apply) */
+  aes67Configured: boolean | null;
+  /** Dante Preferred Leader flag (from conmon 0x0020 offset 0x26) */
+  preferredLeader: boolean | null;
+  /** PTP v1 clock role as reported by conmon (from 0x0020 offset 0x48) */
+  ptpV1Role: 'Leader' | 'Follower' | null;
+  /** PTP clock lock state from heartbeat (224.0.0.233:8708) */
+  clockLocked: boolean | null;
+  /** Product name from conmon make/model response (0x00C0) */
+  productName: string | null;
+  /** Product firmware version from conmon make/model response */
+  productVersion: string | null;
   /** Which discovery sources contributed data */
   discoveredBy: string[];
   lastSeen: number;

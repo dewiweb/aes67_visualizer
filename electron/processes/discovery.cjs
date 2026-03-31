@@ -75,7 +75,8 @@ function mergeDevice(existing, patch) {
 
   // Scalar fields — only fill in if currently empty
   const scalars = ['name', 'manufacturer', 'model', 'software',
-                   'arcpVers', 'routerVers', 'routerInfo', 'ptpGrandmaster', 'macAddress'];
+                   'arcpVers', 'routerVers', 'routerInfo', 'ptpGrandmaster', 'macAddress',
+                   'productName', 'productVersion', 'ptpV1Role'];
   for (const k of scalars) {
     if (!merged[k] && patch[k]) merged[k] = patch[k];
   }
@@ -95,6 +96,14 @@ function mergeDevice(existing, patch) {
   if (patch.isDante)   merged.isDante   = true;
   if (patch.isAES67)   merged.isAES67   = true;
   if (patch.isRAVENNA) merged.isRAVENNA = true;
+
+  // Conmon nullable fields — always overwrite with latest value
+  if (patch.aes67Current    !== undefined) merged.aes67Current    = patch.aes67Current;
+  if (patch.aes67Configured !== undefined) merged.aes67Configured = patch.aes67Configured;
+  if (patch.preferredLeader !== undefined) merged.preferredLeader = patch.preferredLeader;
+  if (patch.clockLocked     !== undefined) merged.clockLocked     = patch.clockLocked;
+  // ptpV1Role: overwrite only if patch has a value
+  if (patch.ptpV1Role) merged.ptpV1Role = patch.ptpV1Role;
 
   // Addresses — keep union
   const addrSet = new Set([...(merged.addresses || []), ...(patch.addresses || [])]);
@@ -154,11 +163,18 @@ function emptyDevice(ip) {
     arcpVers:       null,
     routerVers:     null,
     routerInfo:     null,
-    ptpGrandmaster: null,
-    macAddress:     null,
-    addresses:      [ip],
-    discoveredBy:   [],
-    lastSeen:       Date.now(),
+    ptpGrandmaster:  null,
+    macAddress:      null,
+    aes67Current:    null,
+    aes67Configured: null,
+    preferredLeader: null,
+    ptpV1Role:       null,
+    clockLocked:     null,
+    productName:     null,
+    productVersion:  null,
+    addresses:       [ip],
+    discoveredBy:    [],
+    lastSeen:        Date.now(),
   };
 }
 
@@ -265,9 +281,16 @@ function sendUpdate() {
     routerVers:     d.routerVers || null,
     routerInfo:     d.routerInfo || null,
     ptpGrandmaster: d.ptpGrandmaster || null,
-    macAddress:     d.macAddress || null,
-    discoveredBy:   d.discoveredBy || [],
-    lastSeen:       d.lastSeen || Date.now(),
+    macAddress:      d.macAddress      || null,
+    aes67Current:    d.aes67Current    ?? null,
+    aes67Configured: d.aes67Configured ?? null,
+    preferredLeader: d.preferredLeader ?? null,
+    ptpV1Role:       d.ptpV1Role       || null,
+    clockLocked:     d.clockLocked     ?? null,
+    productName:     d.productName     || null,
+    productVersion:  d.productVersion  || null,
+    discoveredBy:    d.discoveredBy    || [],
+    lastSeen:        d.lastSeen        || Date.now(),
   }));
 
   process.send({ type: 'dante-devices', devices: list });
@@ -463,7 +486,24 @@ process.on('message', (msg) => {
     case 'stop':       stop();                                    break;
     case 'refresh':    refresh();                                 break;
     case 'probe-arc':  probeArcIp(msg.ip);                       break;
-    case 'probe-rtsp': probeRtspIp(msg.ip, msg.streamNames || []); break;
+    case 'probe-rtsp':     probeRtspIp(msg.ip, msg.streamNames || []); break;
+    case 'conmon-patch': {
+      if (msg.ip && msg.patch) {
+        upsert(msg.ip, msg.patch);
+        scheduleUpdate();
+      }
+      break;
+    }
+    case 'conmon-offline': {
+      if (msg.ip) {
+        const d = devices.get(msg.ip);
+        if (d) {
+          devices.set(msg.ip, { ...d, clockLocked: null });
+          scheduleUpdate();
+        }
+      }
+      break;
+    }
   }
 });
 

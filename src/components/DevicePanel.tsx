@@ -236,9 +236,34 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t, onStream
                     <span className="text-[10px] bg-purple-900/50 text-purple-300 px-1.5 py-0.5 rounded">Dante</span>
                   )}
                   {dd?.isDante && (
-                    effectiveAES67
-                      ? <span className="text-[10px] bg-blue-900/50 text-blue-300 px-1.5 py-0.5 rounded">AES67 ✓</span>
-                      : <span className="text-[10px] bg-slate-700/60 text-slate-500 px-1.5 py-0.5 rounded">AES67 ✗</span>
+                    dd.aes67Current !== null
+                      ? dd.aes67Current
+                        ? <span className="text-[10px] bg-blue-900/50 text-blue-300 px-1.5 py-0.5 rounded" title={dd.aes67Configured === false ? 'AES67 on — will disable after reboot' : 'AES67 enabled'}>AES67 ✓</span>
+                        : <span className="text-[10px] bg-slate-700/60 text-slate-500 px-1.5 py-0.5 rounded" title={dd.aes67Configured === true ? 'AES67 off — will enable after reboot' : 'AES67 disabled'}>AES67 ✗</span>
+                      : effectiveAES67
+                        ? <span className="text-[10px] bg-blue-900/50 text-blue-300 px-1.5 py-0.5 rounded">AES67 ✓</span>
+                        : <span className="text-[10px] bg-slate-700/60 text-slate-500 px-1.5 py-0.5 rounded">AES67 ✗</span>
+                  )}
+                  {dd?.ptpV1Role && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                      dd.ptpV1Role === 'Leader'
+                        ? 'bg-amber-900/50 text-amber-300'
+                        : 'bg-slate-700/60 text-slate-400'
+                    }`} title="PTP v1 clock role (conmon)">
+                      {dd.ptpV1Role === 'Leader' ? '★ PTP Leader' : 'PTP Follower'}
+                    </span>
+                  )}
+                  {dd?.preferredLeader === true && (
+                    <span className="text-[10px] bg-amber-900/30 text-amber-400 px-1.5 py-0.5 rounded" title="Preferred Leader enabled">Preferred ★</span>
+                  )}
+                  {dd?.clockLocked !== null && dd?.isDante && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                      dd.clockLocked
+                        ? 'bg-green-900/40 text-green-400'
+                        : 'bg-red-900/40 text-red-400'
+                    }`} title="Clock lock state (heartbeat)">
+                      {dd.clockLocked ? 'Clock ✓' : 'Clock ✗'}
+                    </span>
                   )}
                   {devStreams.length > 0 && (
                     <span className="text-[10px] bg-green-900/50 text-green-300 px-1.5 py-0.5 rounded">
