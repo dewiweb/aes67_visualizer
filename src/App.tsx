@@ -181,29 +181,37 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Start/stop monitoring when slots change
+  // Keep slot stream objects in sync when SAP refresh updates stream metadata.
+  // This must NOT trigger monitoring restarts — it only updates stale references.
+  useEffect(() => {
+    if (streams.length === 0) return;
+    setSlots((prev) => {
+      let changed = false;
+      const next = prev.map((slot) => {
+        if (!slot.stream) return slot;
+        const fresh = streams.find((s) => s.id === slot.stream!.id);
+        if (fresh && fresh !== slot.stream) {
+          changed = true;
+          return { ...slot, stream: fresh };
+        }
+        return slot;
+      });
+      return changed ? next : prev;
+    });
+  }, [streams]);
+
+  // Start monitoring when slots change (stream added/removed from wall).
+  // Does NOT depend on 'streams' — uses slot.stream directly to avoid
+  // triggering on every SAP refresh.
   useEffect(() => {
     if (!window.api) return;
-
-    const monitoredIds = new Set<string>();
-
     slots.forEach((slot) => {
       if (slot.stream) {
-        monitoredIds.add(slot.stream.id);
+        window.api.startMonitoring(slot.stream);
       }
     });
-
-    // Start monitoring for new streams
-    monitoredIds.forEach((id) => {
-      const stream = streams.find((s) => s.id === id);
-      if (stream) {
-        window.api.startMonitoring(stream);
-      }
-    });
-
-    // Note: We don't stop monitoring here to avoid flickering
-    // The meters process handles cleanup
-  }, [slots, streams]);
+    // Note: we don't stop monitoring here — meters process guards against duplicates
+  }, [slots]);
 
   // Handle interface change
   const handleInterfaceChange = useCallback((address: string) => {

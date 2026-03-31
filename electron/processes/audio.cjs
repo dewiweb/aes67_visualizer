@@ -83,10 +83,13 @@ function start(args) {
   }
 
   currentArgs = args;
-  
-  // Stop existing stream
-  stop();
 
+  // Stop existing stream, then start new one only after UDP socket is fully closed.
+  // client.close() is async — binding immediately on the same port causes ghost packets.
+  stopThen(() => _startNow(args));
+}
+
+function _startNow(args) {
   client = dgram.createSocket({ type: 'udp4', reuseAddr: true });
 
   client.on('error', (err) => {
@@ -275,27 +278,43 @@ function start(args) {
   }
 }
 
-function stop() {
-  if (streamOpen) {
-    streamOpen = false;
-    
-    try {
-      if (client) client.close();
-    } catch (e) { /* ignore */ }
-    
-    try {
-      if (rtAudio) {
-        rtAudio.stop();
-        rtAudio.clearOutputQueue();
-        rtAudio.closeStream();
-      }
-    } catch (e) { /* ignore */ }
-    
-    client = null;
-    
+// Stop playback, then invoke cb() once the UDP socket is fully closed.
+// client.close() is async — callers must not rebind the same port until cb fires.
+function stopThen(cb) {
+  if (!streamOpen) {
+    if (cb) cb();
+    return;
+  }
+  streamOpen = false;
+
+  try {
+    if (rtAudio) {
+      rtAudio.stop();
+      rtAudio.clearOutputQueue();
+      rtAudio.closeStream();
+    }
+  } catch (e) { /* ignore */ }
+  rtAudio = null;
+
+  const oldClient = client;
+  client = null;
+
+  if (oldClient) {
+    oldClient.removeAllListeners();
+    oldClient.close(() => {
+      process.send({ type: 'status', playing: false });
+      console.log('[Audio] Playback stopped');
+      if (cb) cb();
+    });
+  } else {
     process.send({ type: 'status', playing: false });
     console.log('[Audio] Playback stopped');
+    if (cb) cb();
   }
+}
+
+function stop() {
+  stopThen(null);
 }
 
 // Initialize and handle messages
