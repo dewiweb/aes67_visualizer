@@ -96,6 +96,9 @@ function start(args) {
 
   client.on('listening', () => {
     try {
+      // Set multicast interface before joining to avoid Linux global interface issue
+      // where setMulticastInterface() in meters.cjs affects all sockets in the process
+      client.setMulticastInterface(args.networkInterface);
       client.addMembership(args.mcast, args.networkInterface);
       console.log(`[Audio] Joined ${args.mcast} on ${args.networkInterface}`);
     } catch (e) {
