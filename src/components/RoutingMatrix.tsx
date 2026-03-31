@@ -120,26 +120,36 @@ const RoutingMatrix: React.FC<RoutingMatrixProps> = ({ devices }) => {
     [devices],
   );
 
-  // Flat TX column list
+  // Flat TX column list — deduplicated by (deviceIp, chId)
   const txCols = useMemo<TxCol[]>(() => {
+    const seen = new Set<string>();
     const cols: TxCol[] = [];
     for (const d of danteDevices)
-      for (const ch of d.txChannelNames || [])
+      for (const ch of d.txChannelNames || []) {
+        const k = `${d.ip}:${ch.id}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
         cols.push({ deviceName: d.name, deviceIp: d.ip, chId: ch.id, chName: ch.name || `ch${ch.id}` });
+      }
     return cols;
   }, [danteDevices]);
 
-  // Flat RX row list
+  // Flat RX row list — deduplicated by (deviceIp, chId)
   const rxRows = useMemo<RxRow[]>(() => {
+    const seen = new Set<string>();
     const rows: RxRow[] = [];
     for (const d of danteDevices)
-      for (const ch of d.rxChannelNames || [])
+      for (const ch of d.rxChannelNames || []) {
+        const k = `${d.ip}:${ch.id}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
         rows.push({
           deviceName: d.name, deviceIp: d.ip, arcPort: null,
           chId: ch.id, chName: ch.name || `ch${ch.id}`,
           txChannelName: ch.txChannelName || null, txHost: ch.txHost || null,
           subscribed: ch.subscribed, statusText: ch.statusText,
         });
+      }
     return rows;
   }, [danteDevices]);
 
