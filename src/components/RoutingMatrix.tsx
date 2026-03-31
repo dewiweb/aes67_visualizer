@@ -111,6 +111,7 @@ const RoutingMatrix: React.FC<RoutingMatrixProps> = ({ devices }) => {
   const [toast, setToast]             = useState<ToastMsg | null>(null);
   const [rxFilter, setRxFilter]       = useState('');
   const [txDeviceFilter, setTxDeviceFilter] = useState<string | null>(null); // null = use first device once known
+  const [rxDeviceFilter, setRxDeviceFilter] = useState<string | null>(null); // null = use first device once known
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -132,8 +133,21 @@ const RoutingMatrix: React.FC<RoutingMatrixProps> = ({ devices }) => {
     return names;
   }, [danteDevices]);
 
-  // ── Effective TX device filter — default to first TX device ─────────────────
+  // ── RX device names list ────────────────────────────────────────────────────
+  const rxDeviceNames = useMemo(() => {
+    const seen = new Set<string>();
+    const names: string[] = [];
+    for (const d of danteDevices)
+      if ((d.rxChannelNames || []).length > 0 && !seen.has(d.name)) {
+        seen.add(d.name);
+        names.push(d.name);
+      }
+    return names;
+  }, [danteDevices]);
+
+  // ── Effective TX/RX device filters — default to first device ──────────────
   const effectiveTxFilter = txDeviceFilter ?? txDeviceNames[0] ?? '__all__';
+  const effectiveRxFilter = rxDeviceFilter ?? rxDeviceNames[0] ?? '__all__';
 
   // ── Flat TX column list — filtered by selected TX device, deduplicated ──────
   const txCols = useMemo<TxCol[]>(() => {
@@ -151,11 +165,12 @@ const RoutingMatrix: React.FC<RoutingMatrixProps> = ({ devices }) => {
     return cols;
   }, [danteDevices, effectiveTxFilter]);
 
-  // ── Flat RX row list — deduplicated ────────────────────────────────────────
+  // ── Flat RX row list — filtered by RX device selector + text, deduplicated ──
   const allRxRows = useMemo<RxRow[]>(() => {
     const seen = new Set<string>();
     const rows: RxRow[] = [];
-    for (const d of danteDevices)
+    for (const d of danteDevices) {
+      if (effectiveRxFilter !== '__all__' && d.name !== effectiveRxFilter) continue;
       for (const ch of d.rxChannelNames || []) {
         const k = `${d.ip}:${ch.id}`;
         if (seen.has(k)) continue;
@@ -167,16 +182,15 @@ const RoutingMatrix: React.FC<RoutingMatrixProps> = ({ devices }) => {
           subscribed: ch.subscribed, statusText: ch.statusText,
         });
       }
+    }
     return rows;
-  }, [danteDevices]);
+  }, [danteDevices, effectiveRxFilter]);
 
-  // ── RX filter ───────────────────────────────────────────────────────────────
+  // ── RX text filter (within selected device) ──────────────────────────────────
   const rxRows = useMemo<RxRow[]>(() => {
     if (!rxFilter.trim()) return allRxRows;
     const q = rxFilter.toLowerCase();
-    return allRxRows.filter(r =>
-      r.deviceName.toLowerCase().includes(q) || r.chName.toLowerCase().includes(q)
-    );
+    return allRxRows.filter(r => r.chName.toLowerCase().includes(q));
   }, [allRxRows, rxFilter]);
 
   // ── TX device header groups ─────────────────────────────────────────────────
@@ -311,6 +325,23 @@ const RoutingMatrix: React.FC<RoutingMatrixProps> = ({ devices }) => {
           </button>
         )}
 
+        {/* RX device selector */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className="text-xs text-slate-500">RX:</span>
+          <select
+            value={effectiveRxFilter}
+            onChange={e => setRxDeviceFilter(e.target.value)}
+            className="text-xs bg-slate-800 border border-slate-600 rounded px-2 py-0.5 text-slate-200 focus:outline-none focus:border-purple-500 max-w-[180px]"
+          >
+            <option value="__all__">All RX ({danteDevices.reduce((s,d)=>(s+(d.rxChannelNames||[]).length),0)} ch) ⚠️ slow</option>
+            {rxDeviceNames.map(n => {
+              const d = danteDevices.find(x => x.name === n);
+              const count = (d?.rxChannelNames || []).length;
+              return <option key={n} value={n}>{n} ({count} ch)</option>;
+            })}
+          </select>
+        </div>
+
         {/* TX device selector */}
         <div className="flex items-center gap-1.5 shrink-0">
           <span className="text-xs text-slate-500">TX:</span>
@@ -328,15 +359,15 @@ const RoutingMatrix: React.FC<RoutingMatrixProps> = ({ devices }) => {
           </select>
         </div>
 
-        {/* RX search */}
+        {/* Channel text search */}
         <div className="flex items-center gap-1 bg-slate-800 border border-slate-600 rounded px-2 py-0.5 min-w-0">
           <Search size={10} className="text-slate-500 shrink-0" />
           <input
             type="text"
             value={rxFilter}
             onChange={e => setRxFilter(e.target.value)}
-            placeholder="Filter RX…"
-            className="bg-transparent text-xs text-slate-200 outline-none w-28 placeholder-slate-600"
+            placeholder="Filter ch…"
+            className="bg-transparent text-xs text-slate-200 outline-none w-24 placeholder-slate-600"
           />
           {rxFilter && (
             <button onClick={() => setRxFilter('')} className="text-slate-500 hover:text-slate-300 shrink-0">
@@ -347,7 +378,7 @@ const RoutingMatrix: React.FC<RoutingMatrixProps> = ({ devices }) => {
 
         {/* Stats */}
         <span className="text-xs text-slate-600 ml-auto shrink-0">
-          {rxRows.length}/{allRxRows.length} RX · {txCols.length} TX · {danteDevices.length} devices
+          {rxRows.length} RX · {txCols.length} TX · {danteDevices.length} devices
         </span>
       </div>
 
