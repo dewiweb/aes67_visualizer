@@ -1,5 +1,5 @@
 import React from 'react';
-import { Radio, Server, Clock, FileText, ShieldAlert } from 'lucide-react';
+import { Radio, Server, Clock, FileText, ShieldAlert, GitMerge } from 'lucide-react';
 import { ViewId } from '../App';
 
 interface NavRailProps {
@@ -67,6 +67,13 @@ const NavRail: React.FC<NavRailProps> = ({
       countColor: 'bg-slate-600',
       activeColor: 'text-green-400',
       activeBorder: 'border-green-500',
+    },
+    {
+      id: 'routing',
+      icon: <GitMerge size={20} />,
+      label: 'Routing',
+      activeColor: 'text-orange-400',
+      activeBorder: 'border-orange-500',
     },
     {
       id: 'permissions',

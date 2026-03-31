@@ -29,7 +29,7 @@ import MainPanel from './components/MainPanel';
 import StreamCard from './components/StreamCard';
 import SettingsPanel from './components/SettingsPanel';
 
-export type ViewId = 'monitoring' | 'devices' | 'ptp' | 'sdp' | 'permissions';
+export type ViewId = 'monitoring' | 'devices' | 'ptp' | 'sdp' | 'routing' | 'permissions';
 
 const App: React.FC = () => {
   // Language
