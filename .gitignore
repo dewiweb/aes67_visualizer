@@ -39,6 +39,8 @@ desktop.ini
 # IDE
 .idea/
 .vscode/
+.windsurf/
+.devin/
 *.swp
 *.swo
 *.sublime-project
