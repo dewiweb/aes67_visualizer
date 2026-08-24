@@ -59,18 +59,6 @@ export interface Stream {
   mid?: string;
 }
 
-export interface Device {
-  ip: string;
-  name: string;
-  streams: Stream[];
-  ptpGrandmaster?: string;
-  ptpVersion?: string;
-  ptpDomain?: string;
-  tool?: string;
-  streamCount: number;
-  channelCount: number;
-}
-
 export interface NetworkDevice {
   /** Primary IPv4 address — registry key */
   ip: string;

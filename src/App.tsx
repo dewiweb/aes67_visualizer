@@ -220,6 +220,16 @@ const App: React.FC = () => {
       setPortConflict(null);
     });
 
+    // Subscribe to SDP errors
+    const unsubSdpError = window.api.onSdpError && window.api.onSdpError((data: string) => {
+      console.error('[SDP Error]', data);
+    });
+
+    // Subscribe to audio errors
+    const unsubAudioError = window.api.onAudioError && window.api.onAudioError((data: string) => {
+      console.error('[Audio Error]', data);
+    });
+
     // Subscribe to mDNS system errors (avahi missing / daemon not running)
     const unsubMdnsError = window.api.onMdnsError && window.api.onMdnsError((data) => {
       setMdnsError(data);
@@ -254,6 +264,8 @@ const App: React.FC = () => {
       unsubInterface();
       unsubPortConflict();
       unsubSdpStatus();
+      if (unsubSdpError) unsubSdpError();
+      if (unsubAudioError) unsubAudioError();
       if (unsubPtpStatus) unsubPtpStatus();
       unsubPtpClocks();
       unsubDanteDevices();
