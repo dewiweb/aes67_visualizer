@@ -21,6 +21,7 @@ interface MainPanelProps {
   devices: NetworkDevice[];
   ptpClocks: PtpClock[];
   slots: MonitorSlot[];
+  gridCols: number;
   playingStreamId: string | null;
   portConflicts: PortConflictData[];
   mdnsError: { code: string; message: string } | null;
@@ -41,6 +42,7 @@ const MainPanel: React.FC<MainPanelProps> = ({
   devices,
   ptpClocks,
   slots,
+  gridCols,
   playingStreamId,
   portConflicts,
   mdnsError,
@@ -195,6 +197,7 @@ const MainPanel: React.FC<MainPanelProps> = ({
         <MonitoringWall
           t={t}
           slots={slots}
+          gridCols={gridCols}
           streamLevels={streamLevels}
           streamPtpStatuses={streamPtpStatuses}
           onRemoveFromSlot={onRemoveFromSlot}

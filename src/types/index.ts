@@ -200,6 +200,8 @@ export interface Settings {
   sdpDeleteTimeout: number;
   language: string;
   autoPlay?: AutoPlayConfig;
+  gridCols: number;
+  gridRows: number;
 }
 
 export interface PersistentData {

@@ -53,6 +53,10 @@ export const translations = {
     routing: 'Routing',
     permissions: 'Permissions',
     search: 'Search...',
+    wallGrid: 'Monitoring Wall Grid',
+    columns: 'Columns',
+    rows: 'Rows',
+    slots: 'slots',
   },
   fr: {
     appTitle: 'AES67 Visualizer',
@@ -108,6 +112,10 @@ export const translations = {
     routing: 'Routage',
     permissions: 'Permissions',
     search: 'Rechercher...',
+    wallGrid: 'Grille du Mur de Monitoring',
+    columns: 'Colonnes',
+    rows: 'Lignes',
+    slots: 'emplacements',
   },
   de: {
     appTitle: 'AES67 Visualizer',
@@ -163,6 +171,10 @@ export const translations = {
     routing: 'Routing',
     permissions: 'Berechtigungen',
     search: 'Suchen...',
+    wallGrid: 'Überwachungswand Raster',
+    columns: 'Spalten',
+    rows: 'Zeilen',
+    slots: 'Slots',
   },
   zh: {
     appTitle: 'AES67 专业监视器',
@@ -218,6 +230,10 @@ export const translations = {
     routing: '路由',
     permissions: '权限',
     search: '搜索...',
+    wallGrid: '监看墙网格',
+    columns: '列',
+    rows: '行',
+    slots: '槽位',
   },
   ja: {
     appTitle: 'AES67 プロモニター',
@@ -273,6 +289,10 @@ export const translations = {
     routing: 'ルーティング',
     permissions: '権限',
     search: '検索...',
+    wallGrid: '監視ウォールグリッド',
+    columns: '列',
+    rows: '行',
+    slots: 'スロット',
   },
   ko: {
     appTitle: 'AES67 프로 모니터',
@@ -328,6 +348,10 @@ export const translations = {
     routing: '라우팅',
     permissions: '권한',
     search: '검색...',
+    wallGrid: '모니터링 월 그리드',
+    columns: '열',
+    rows: '행',
+    slots: '슬롯',
   },
   es: {
     appTitle: 'AES67 Visualizer',
@@ -383,6 +407,10 @@ export const translations = {
     routing: 'Enrutado',
     permissions: 'Permisos',
     search: 'Buscar...',
+    wallGrid: 'Cuadrícula del Muro',
+    columns: 'Columnas',
+    rows: 'Filas',
+    slots: 'ranuras',
   },
   it: {
     appTitle: 'AES67 Visualizer',
@@ -438,6 +466,10 @@ export const translations = {
     routing: 'Routing',
     permissions: 'Permessi',
     search: 'Cerca...',
+    wallGrid: 'Griglia Parete Monitor',
+    columns: 'Colonne',
+    rows: 'Righe',
+    slots: 'slot',
   },
 };
 

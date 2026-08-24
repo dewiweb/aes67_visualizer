@@ -63,6 +63,8 @@ const App: React.FC = () => {
     hideUnsupported: true,
     sdpDeleteTimeout: 300,
     language: 'en',
+    gridCols: 4,
+    gridRows: 4,
   });
 
   // Audio playback
@@ -80,6 +82,28 @@ const App: React.FC = () => {
   const [portConflicts, setPortConflicts] = useState<PortConflictData[]>([]);
   const [mdnsError, setMdnsError] = useState<{ code: string; message: string } | null>(null);
   const [activeView, setActiveView] = useState<ViewId>('monitoring');
+
+  // Resize slots when grid dimensions change
+  const targetSlotCount = settings.gridCols * settings.gridRows;
+  useEffect(() => {
+    setSlots(prev => {
+      if (prev.length === targetSlotCount) return prev;
+      if (prev.length > targetSlotCount) {
+        // Shrink: keep slots that have streams first, then empty ones
+        const withStreams = prev.filter(s => s.stream);
+        const empty = prev.filter(s => !s.stream);
+        const kept = [...withStreams, ...empty].slice(0, targetSlotCount);
+        return kept.map((s, i) => ({ ...s, id: `slot-${i + 1}` }));
+      }
+      // Grow: add empty slots
+      const newSlots = Array.from({ length: targetSlotCount - prev.length }, (_, i) => ({
+        id: `slot-${prev.length + i + 1}`,
+        streamId: null,
+        stream: null,
+      }));
+      return [...prev, ...newSlots];
+    });
+  }, [targetSlotCount]);
 
   // Auto-play state
   const [autoPlayConfig, setAutoPlayConfig] = useState<AutoPlayConfig | null>(null);
@@ -112,7 +136,17 @@ const App: React.FC = () => {
         setCurrentInterface(data.currentInterface);
       }
       if (data.persistentData?.settings) {
-        setSettings(data.persistentData.settings);
+        const s = data.persistentData.settings;
+        setSettings({
+          bufferSize: s.bufferSize ?? 4,
+          bufferEnabled: s.bufferEnabled ?? false,
+          hideUnsupported: s.hideUnsupported ?? true,
+          sdpDeleteTimeout: s.sdpDeleteTimeout ?? 300,
+          language: s.language ?? 'en',
+          gridCols: s.gridCols ?? 4,
+          gridRows: s.gridRows ?? 4,
+          autoPlay: s.autoPlay,
+        });
         setLanguage(data.persistentData.settings.language as Language || 'en');
       }
     });
@@ -595,6 +629,7 @@ const App: React.FC = () => {
             devices={devices}
             ptpClocks={ptpClocks}
             slots={slots}
+            gridCols={settings.gridCols}
             playingStreamId={playingStreamId}
             portConflicts={portConflicts}
             mdnsError={mdnsError}

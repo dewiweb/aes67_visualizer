@@ -159,6 +159,42 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
             </div>
           </div>
 
+          {/* Monitoring Wall Grid */}
+          <div className="space-y-2">
+            <label className="text-sm text-slate-400">
+              {t.wallGrid || 'Monitoring Wall Grid'}
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-xs text-slate-500">{t.columns || 'Columns'}</label>
+                <select
+                  value={settings.gridCols}
+                  onChange={(e) => onSettingsChange({ gridCols: parseInt(e.target.value) })}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                >
+                  {[1, 2, 3, 4].map(n => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-slate-500">{t.rows || 'Rows'}</label>
+                <select
+                  value={settings.gridRows}
+                  onChange={(e) => onSettingsChange({ gridRows: parseInt(e.target.value) })}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                >
+                  {[1, 2, 3, 4].map(n => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <p className="text-xs text-slate-500">
+              {settings.gridCols} × {settings.gridRows} = {settings.gridCols * settings.gridRows} {t.slots || 'slots'}
+            </p>
+          </div>
+
           {/* Auto-play section */}
           <div className="border-t border-slate-700 pt-4 space-y-3">
             <div className="flex items-center justify-between">

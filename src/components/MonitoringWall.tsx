@@ -7,6 +7,7 @@ import LevelMeter from './LevelMeter';
 interface MonitoringWallProps {
   t: Record<string, string>;
   slots: MonitorSlot[];
+  gridCols: number;
   streamLevels: StreamLevels;
   streamPtpStatuses: StreamPtpStatuses;
   onRemoveFromSlot: (slotId: string) => void;
@@ -133,13 +134,21 @@ const MonitorSlotComponent: React.FC<SlotProps> = ({ slot, levels, ptpStatus, t,
 const MonitoringWall: React.FC<MonitoringWallProps> = ({
   t,
   slots,
+  gridCols,
   streamLevels,
   streamPtpStatuses,
   onRemoveFromSlot,
 }) => {
+  const gridColsCls: Record<number, string> = {
+    1: 'grid-cols-1',
+    2: 'grid-cols-2',
+    3: 'grid-cols-3',
+    4: 'grid-cols-2 lg:grid-cols-4',
+  };
+
   return (
     <main className="flex-1 p-4 overflow-auto bg-slate-900">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className={`grid ${gridColsCls[gridCols] || gridColsCls[4]} gap-4`}>
         {slots.map((slot) => (
           <MonitorSlotComponent
             key={slot.id}
