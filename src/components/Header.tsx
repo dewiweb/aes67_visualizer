@@ -1,5 +1,5 @@
 import React from 'react';
-import { Settings, Globe, Network } from 'lucide-react';
+import { Settings, Globe, Network, PlayCircle } from 'lucide-react';
 import { NetworkInterface } from '../types';
 import { Language } from '../i18n/translations';
 
@@ -12,6 +12,7 @@ interface HeaderProps {
   onInterfaceChange: (address: string) => void;
   onLanguageChange: (lang: Language) => void;
   onSettingsClick: () => void;
+  autoPlayEnabled?: boolean;
 }
 
 const Header: React.FC<HeaderProps> = ({
@@ -23,6 +24,7 @@ const Header: React.FC<HeaderProps> = ({
   onInterfaceChange,
   onLanguageChange,
   onSettingsClick,
+  autoPlayEnabled = false,
 }) => {
   return (
     <header className="h-14 bg-slate-800 border-b border-slate-700 flex items-center justify-between px-4 shrink-0">
@@ -31,6 +33,15 @@ const Header: React.FC<HeaderProps> = ({
           <span className="text-white font-bold text-sm">A67</span>
         </div>
         <h1 className="text-lg font-semibold text-white">{t.appTitle}</h1>
+        {autoPlayEnabled && (
+          <span
+            className="flex items-center gap-1 text-xs text-green-400 bg-green-900/30 px-2 py-0.5 rounded-full"
+            title={t.autoPlay || 'Auto-Play active'}
+          >
+            <PlayCircle size={12} />
+            Auto
+          </span>
+        )}
       </div>
 
       <div className="flex items-center gap-4">

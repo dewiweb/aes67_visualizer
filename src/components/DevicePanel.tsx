@@ -13,7 +13,6 @@ interface DevicePanelProps {
   streams: Stream[];
   devices: NetworkDevice[];
   t: Record<string, string>;
-  onStreamClick?: (stream: Stream) => void;
 }
 
 /** Unified view entry: mDNS device info + SAP streams, keyed by IP */
@@ -57,7 +56,7 @@ function buildUnifiedList(devices: NetworkDevice[], streams: Stream[]): UnifiedD
   return Array.from(map.values()).sort((a, b) => a.ip.localeCompare(b.ip));
 }
 
-const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t, onStreamClick }) => {
+const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t }) => {
   const [expanded, setExpanded]   = React.useState<Set<string>>(new Set());
   const [renaming, setRenaming]   = useState<string | null>(null);
   const [renameVal, setRenameVal] = useState('');
@@ -501,8 +500,7 @@ const DevicePanel: React.FC<DevicePanelProps> = ({ streams, devices, t, onStream
                     {devStreams.filter(s => !matchedStreamIds.has(s.id)).map(stream => (
                       <div
                         key={stream.id}
-                        onClick={() => onStreamClick?.(stream)}
-                        className="px-3 py-2 hover:bg-slate-700/30 cursor-pointer transition-colors"
+                        className="px-3 py-2 hover:bg-slate-700/30 transition-colors"
                       >
                         <div className="flex items-center justify-between">
                           <span className="text-sm text-slate-300 truncate">{stream.name}</span>

@@ -262,7 +262,7 @@ function _startNow(args) {
       'AES67 Pro Monitor'
     );
     rtAudio.start();
-    client.bind(args.port);
+    client.bind({ port: args.port, exclusive: false });
     streamOpen = true;
     
     process.send({ 

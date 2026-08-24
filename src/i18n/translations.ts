@@ -49,6 +49,10 @@ export const translations = {
     devices: 'Devices',
     noDevices: 'No devices detected',
     exportJson: 'Export JSON',
+    ptp: 'PTP',
+    routing: 'Routing',
+    permissions: 'Permissions',
+    search: 'Search...',
   },
   fr: {
     appTitle: 'AES67 Visualizer',
@@ -100,6 +104,10 @@ export const translations = {
     devices: 'Appareils',
     noDevices: 'Aucun appareil détecté',
     exportJson: 'Exporter JSON',
+    ptp: 'PTP',
+    routing: 'Routage',
+    permissions: 'Permissions',
+    search: 'Rechercher...',
   },
   de: {
     appTitle: 'AES67 Visualizer',
@@ -151,6 +159,10 @@ export const translations = {
     devices: 'Geräte',
     noDevices: 'Keine Geräte erkannt',
     exportJson: 'JSON exportieren',
+    ptp: 'PTP',
+    routing: 'Routing',
+    permissions: 'Berechtigungen',
+    search: 'Suchen...',
   },
   zh: {
     appTitle: 'AES67 专业监视器',
@@ -202,6 +214,10 @@ export const translations = {
     devices: '设备',
     noDevices: '未检测到设备',
     exportJson: '导出 JSON',
+    ptp: 'PTP',
+    routing: '路由',
+    permissions: '权限',
+    search: '搜索...',
   },
   ja: {
     appTitle: 'AES67 プロモニター',
@@ -253,6 +269,10 @@ export const translations = {
     devices: 'デバイス',
     noDevices: 'デバイスが検出されません',
     exportJson: 'JSON エクスポート',
+    ptp: 'PTP',
+    routing: 'ルーティング',
+    permissions: '権限',
+    search: '検索...',
   },
   ko: {
     appTitle: 'AES67 프로 모니터',
@@ -304,6 +324,10 @@ export const translations = {
     devices: '장치',
     noDevices: '감지된 장치 없음',
     exportJson: 'JSON 내보내기',
+    ptp: 'PTP',
+    routing: '라우팅',
+    permissions: '권한',
+    search: '검색...',
   },
   es: {
     appTitle: 'AES67 Visualizer',
@@ -355,6 +379,10 @@ export const translations = {
     devices: 'Dispositivos',
     noDevices: 'No se detectaron dispositivos',
     exportJson: 'Exportar JSON',
+    ptp: 'PTP',
+    routing: 'Enrutado',
+    permissions: 'Permisos',
+    search: 'Buscar...',
   },
   it: {
     appTitle: 'AES67 Visualizer',
@@ -406,6 +434,10 @@ export const translations = {
     devices: 'Dispositivi',
     noDevices: 'Nessun dispositivo rilevato',
     exportJson: 'Esporta JSON',
+    ptp: 'PTP',
+    routing: 'Routing',
+    permissions: 'Permessi',
+    search: 'Cerca...',
   },
 };
 

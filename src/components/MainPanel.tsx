@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Plus, Download, X, Pencil } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Plus, Download, X, Pencil, Search, Radio } from 'lucide-react';
 import { ViewId } from '../App';
 import {
   Stream, StreamLevels, StreamPtpStatuses,
@@ -54,9 +54,22 @@ const MainPanel: React.FC<MainPanelProps> = ({
   const [sdpInput, setSdpInput] = useState('');
   const [showSdpModal, setShowSdpModal] = useState(false);
   const [editingStreamId, setEditingStreamId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
-  const sapStreams  = streams.filter(s => s.sourceType === 'sap');
-  const manualStreams = streams.filter(s => s.sourceType === 'manual');
+  const sapStreams  = useMemo(() => streams.filter(s => s.sourceType === 'sap'), [streams]);
+  const manualStreams = useMemo(() => streams.filter(s => s.sourceType === 'manual'), [streams]);
+
+  const filterFn = (s: Stream) => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return s.name?.toLowerCase().includes(q)
+      || s.mcast?.toLowerCase().includes(q)
+      || s.codec?.toLowerCase().includes(q)
+      || s.streamFamily?.toLowerCase().includes(q);
+  };
+
+  const filteredSap = sapStreams.filter(filterFn);
+  const filteredManual = manualStreams.filter(filterFn);
 
   const handleAddSdp = () => {
     if (sdpInput.trim()) {
@@ -107,23 +120,38 @@ const MainPanel: React.FC<MainPanelProps> = ({
               <button
                 onClick={onExportJson}
                 disabled={streams.length === 0}
-                title="Export JSON"
+                title={t.exportJson || 'Export JSON'}
                 className="p-1 text-slate-500 hover:text-slate-300 disabled:opacity-30 transition-colors"
               >
                 <Download size={14} />
               </button>
             </div>
           </div>
+          {/* Search filter */}
+          {streams.length > 3 && (
+            <div className="px-3 py-2 border-b border-slate-700">
+              <div className="relative">
+                <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={t.search || 'Search...'}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg pl-7 pr-2 py-1 text-xs text-slate-300 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+            </div>
+          )}
           <div className="flex-1 overflow-y-auto p-2 space-y-2">
-            {sapStreams.length === 0 && manualStreams.length === 0 ? (
+            {filteredSap.length === 0 && filteredManual.length === 0 ? (
               <div className="text-center py-10 text-slate-500 text-sm">
-                <div className="text-3xl mb-2 opacity-40">📡</div>
+                <Radio size={32} className="mx-auto mb-2 opacity-30" />
                 <p>{t.noStreams || 'No streams detected'}</p>
                 <p className="text-xs mt-1 text-slate-600">{t.waitingForStreams || 'Waiting for SAP...'}</p>
               </div>
             ) : (
               <>
-                {sapStreams.map(stream => (
+                {filteredSap.map(stream => (
                   <StreamCard
                     key={stream.id}
                     stream={stream}
@@ -135,12 +163,12 @@ const MainPanel: React.FC<MainPanelProps> = ({
                     draggable
                   />
                 ))}
-                {manualStreams.length > 0 && (
+                {filteredManual.length > 0 && (
                   <>
                     <div className="pt-2 pb-1 text-xs font-semibold text-slate-500 uppercase tracking-wide">
                       {t.manual || 'Manual'}
                     </div>
-                    {manualStreams.map(stream => (
+                    {filteredManual.map(stream => (
                       <StreamCard
                         key={stream.id}
                         stream={stream}
@@ -252,7 +280,6 @@ const MainPanel: React.FC<MainPanelProps> = ({
             streams={streams}
             devices={devices}
             t={t}
-            onStreamClick={(stream) => onPlayStream(stream, 0, Math.min(1, stream.channels - 1))}
           />
         </div>
       </div>

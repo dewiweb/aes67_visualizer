@@ -139,10 +139,6 @@ const MonitoringWall: React.FC<MonitoringWallProps> = ({
 }) => {
   return (
     <main className="flex-1 p-4 overflow-auto bg-slate-900">
-      <div className="mb-4">
-        <h2 className="text-lg font-semibold text-white">{t.monitoring}</h2>
-      </div>
-
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {slots.map((slot) => (
           <MonitorSlotComponent

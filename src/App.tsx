@@ -8,6 +8,7 @@ import {
   DragStartEvent,
   DragEndEvent,
 } from '@dnd-kit/core';
+import { AlertTriangle } from 'lucide-react';
 import { translations, Language, languageNames } from './i18n/translations';
 import {
   Stream,
@@ -533,13 +534,14 @@ const App: React.FC = () => {
           onInterfaceChange={handleInterfaceChange}
           onLanguageChange={(lang) => handleSettingsChange({ language: lang })}
           onSettingsClick={handleOpenSettings}
+          autoPlayEnabled={!!autoPlayConfig?.enabled}
         />
 
         {/* Port conflict warning banner */}
         {portConflict && (
           <div className="bg-red-900/90 border-b border-red-700 px-4 py-3 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <span className="text-red-200 text-2xl">⚠️</span>
+              <AlertTriangle size={24} className="text-red-200" />
               <div>
                 <p className="text-red-100 font-medium">
                   {t.portConflict || 'Port conflict detected'}
@@ -575,6 +577,7 @@ const App: React.FC = () => {
           <NavRail
             activeView={activeView}
             onViewChange={setActiveView}
+            t={t}
             streamCount={filteredStreams.length}
             deviceCount={new Set([
               ...devices.map(d => d.ip).filter(Boolean),
@@ -623,8 +626,6 @@ const App: React.FC = () => {
           <SettingsPanel
             t={t}
             settings={settings}
-            language={language}
-            languageNames={languageNames}
             audioDevices={audioDevices}
             currentAudioDevice={currentAudioDevice}
             autoPlayConfig={autoPlayConfig}

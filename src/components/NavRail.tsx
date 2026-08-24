@@ -9,6 +9,7 @@ interface NavRailProps {
   deviceCount: number;
   ptpCount: number;
   conflictCount: number;
+  t: Record<string, string>;
 }
 
 interface NavItem {
@@ -28,12 +29,13 @@ const NavRail: React.FC<NavRailProps> = ({
   deviceCount,
   ptpCount,
   conflictCount,
+  t,
 }) => {
   const items: NavItem[] = [
     {
       id: 'monitoring',
       icon: <Radio size={20} />,
-      label: 'Streams',
+      label: t.streams || 'Streams',
       count: streamCount,
       countColor: 'bg-blue-600',
       activeColor: 'text-blue-400',
@@ -42,7 +44,7 @@ const NavRail: React.FC<NavRailProps> = ({
     {
       id: 'devices',
       icon: <Server size={20} />,
-      label: 'Devices',
+      label: t.devices || 'Devices',
       count: deviceCount,
       countColor: 'bg-slate-600',
       activeColor: 'text-purple-400',
@@ -51,7 +53,7 @@ const NavRail: React.FC<NavRailProps> = ({
     {
       id: 'ptp',
       icon: <Clock size={20} />,
-      label: 'PTP',
+      label: t.ptp || 'PTP',
       count: ptpCount || undefined,
       countColor: 'bg-amber-700',
       activeColor: 'text-amber-400',
@@ -60,14 +62,14 @@ const NavRail: React.FC<NavRailProps> = ({
     {
       id: 'routing',
       icon: <GitMerge size={20} />,
-      label: 'Routing',
+      label: t.routing || 'Routing',
       activeColor: 'text-orange-400',
       activeBorder: 'border-orange-500',
     },
     {
       id: 'permissions',
       icon: <ShieldAlert size={20} />,
-      label: 'Permissions',
+      label: t.permissions || 'Permissions',
       count: conflictCount || undefined,
       countColor: 'bg-red-600',
       activeColor: 'text-red-400',

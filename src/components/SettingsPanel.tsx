@@ -1,13 +1,10 @@
 import React, { useState } from 'react';
 import { X } from 'lucide-react';
 import { Settings, AudioDevice, AutoPlayConfig } from '../types';
-import { Language } from '../i18n/translations';
 
 interface SettingsPanelProps {
   t: Record<string, string>;
   settings: Settings;
-  language: Language;
-  languageNames: Record<Language, string>;
   audioDevices: AudioDevice[];
   currentAudioDevice: AudioDevice | null;
   autoPlayConfig: AutoPlayConfig | null;
@@ -20,8 +17,6 @@ interface SettingsPanelProps {
 const SettingsPanel: React.FC<SettingsPanelProps> = ({
   t,
   settings,
-  language,
-  languageNames,
   audioDevices,
   currentAudioDevice,
   autoPlayConfig,
@@ -65,22 +60,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
         {/* Content */}
         <div className="p-4 space-y-4 overflow-y-auto">
-          {/* Language */}
-          <div className="space-y-2">
-            <label className="text-sm text-slate-400">{t.language}</label>
-            <select
-              value={language}
-              onChange={(e) => onSettingsChange({ language: e.target.value })}
-              className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-            >
-              {Object.entries(languageNames).map(([code, name]) => (
-                <option key={code} value={code}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </div>
-
           {/* Audio Device */}
           <div className="space-y-2">
             <label className="text-sm text-slate-400">{t.audioDevice}</label>
@@ -219,7 +198,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     value={autoPlaySdp}
                     onChange={(e) => setAutoPlaySdp(e.target.value)}
                     placeholder={`v=0\r\no=- 1234567890 1234567890 IN IP4 192.168.20.10\r\ns=Lawo Stream\r\nc=IN IP4 230.20.10.20\r\nm=audio 5004 RTP/AVP 96\r\n...`}
-                    className="w-full min-h-[100px] bg-slate-900 border border-slate-600 rounded-lg p-2 text-xs font-mono text-slate-300 resize-none focus:outline-none focus:border-blue-500"
+                    className="w-full min-h-[200px] bg-slate-900 border border-slate-600 rounded-lg p-2 text-xs font-mono text-slate-300 resize-y focus:outline-none focus:border-blue-500"
                     spellCheck={false}
                   />
                 </div>
