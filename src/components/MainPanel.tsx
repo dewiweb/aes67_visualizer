@@ -71,6 +71,9 @@ const MainPanel: React.FC<MainPanelProps> = ({
   const filteredSap = sapStreams.filter(filterFn);
   const filteredManual = manualStreams.filter(filterFn);
 
+  // Stream IDs currently in wall slots — hide their meters in the list to avoid duplication
+  const slottedStreamIds = new Set(slots.filter(s => s.stream).map(s => s.stream!.id));
+
   const handleAddSdp = () => {
     if (sdpInput.trim()) {
       if (editingStreamId) {
@@ -155,7 +158,7 @@ const MainPanel: React.FC<MainPanelProps> = ({
                   <StreamCard
                     key={stream.id}
                     stream={stream}
-                    levels={streamLevels[stream.id]}
+                    levels={slottedStreamIds.has(stream.id) ? undefined : streamLevels[stream.id]}
                     ptpStatus={streamPtpStatuses[stream.id]}
                     isPlaying={playingStreamId === stream.id}
                     onPlay={(ch1, ch2) => onPlayStream(stream, ch1, ch2)}
@@ -172,7 +175,7 @@ const MainPanel: React.FC<MainPanelProps> = ({
                       <StreamCard
                         key={stream.id}
                         stream={stream}
-                        levels={streamLevels[stream.id]}
+                        levels={slottedStreamIds.has(stream.id) ? undefined : streamLevels[stream.id]}
                         ptpStatus={streamPtpStatuses[stream.id]}
                         isPlaying={playingStreamId === stream.id}
                         onPlay={(ch1, ch2) => onPlayStream(stream, ch1, ch2)}
