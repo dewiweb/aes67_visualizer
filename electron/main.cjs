@@ -1,16 +1,10 @@
-import { app, BrowserWindow, ipcMain, Menu } from 'electron';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { fork, exec } from 'child_process';
-import { createRequire } from 'module';
-import Store from 'electron-store';
-import os from 'os';
+const { app, BrowserWindow, ipcMain, Menu } = require('electron');
+const path = require('path');
+const { fork, exec } = require('child_process');
+const os = require('os');
 
-const require = createRequire(import.meta.url);
 const arc = require('./protocols/arc.cjs');
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const Store = require('electron-store');
 
 const store = new Store();
 
@@ -261,6 +255,10 @@ function initChildProcesses() {
       sapStreams = data.streams;
       sendToRenderer('streams-update', sapStreams);
 
+      // Persist manual streams (save their SDP for restoration on next startup)
+      const manualStreams = sapStreams.filter(s => s.sourceType === 'manual' && s.raw);
+      store.set('manualStreams', manualStreams.map(s => s.raw));
+
       // Probe new SAP source IPs via RTSP to discover all RAVENNA streams
       // Group stream names by IP so probe can try /by-name/<stream> paths
       const ipStreams = {};
@@ -417,6 +415,10 @@ function setupIpcHandlers() {
       safeSend(conmonProcess, { type: 'set-interface',  address });
       safeSend(danteProcess,  { type: 'refresh' });
 
+      // Stop audio playback — it's bound to the old interface and can't follow seamlessly.
+      // The renderer will auto-reconnect (auto-play) or the user can restart manually.
+      safeSend(audioProcess, { type: 'stop' });
+
       sendToRenderer('interface-changed', iface);
     }
   });
@@ -462,6 +464,15 @@ function setupIpcHandlers() {
     if (settings.sdpDeleteTimeout !== undefined) {
       safeSend(sdpProcess, { type: 'set-timeout', timeout: settings.sdpDeleteTimeout });
     }
+  });
+
+  // Auto-play config (persistent)
+  ipcMain.handle('get-auto-play', () => {
+    return store.get('autoPlay', null);
+  });
+
+  ipcMain.on('set-auto-play', (event, config) => {
+    store.set('autoPlay', config);
   });
 
   // Audio device
@@ -547,6 +558,15 @@ app.whenReady().then(() => {
     safeSend(metersProcess, { type: 'set-interface', address: addr });
     safeSend(ptpProcess,    { type: 'start', interface: addr });
     safeSend(danteProcess,  { type: 'init' });
+
+    // Restore persisted manual streams
+    const savedManualStreams = store.get('manualStreams', []);
+    if (savedManualStreams && savedManualStreams.length > 0) {
+      console.log(`[Main] Restoring ${savedManualStreams.length} manual stream(s)`);
+      for (const sdp of savedManualStreams) {
+        safeSend(sdpProcess, { type: 'add-manual', sdp });
+      }
+    }
   }
 
   app.on('activate', () => {

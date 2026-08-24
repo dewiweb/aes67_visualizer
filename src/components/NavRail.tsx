@@ -1,5 +1,5 @@
 import React from 'react';
-import { Radio, Server, Clock, FileText, ShieldAlert, GitMerge } from 'lucide-react';
+import { Radio, Server, Clock, ShieldAlert, GitMerge } from 'lucide-react';
 import { ViewId } from '../App';
 
 interface NavRailProps {
@@ -8,7 +8,6 @@ interface NavRailProps {
   streamCount: number;
   deviceCount: number;
   ptpCount: number;
-  manualCount: number;
   conflictCount: number;
 }
 
@@ -28,7 +27,6 @@ const NavRail: React.FC<NavRailProps> = ({
   streamCount,
   deviceCount,
   ptpCount,
-  manualCount,
   conflictCount,
 }) => {
   const items: NavItem[] = [
@@ -58,15 +56,6 @@ const NavRail: React.FC<NavRailProps> = ({
       countColor: 'bg-amber-700',
       activeColor: 'text-amber-400',
       activeBorder: 'border-amber-500',
-    },
-    {
-      id: 'sdp',
-      icon: <FileText size={20} />,
-      label: 'SDP',
-      count: manualCount || undefined,
-      countColor: 'bg-slate-600',
-      activeColor: 'text-green-400',
-      activeBorder: 'border-green-500',
     },
     {
       id: 'routing',

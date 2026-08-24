@@ -51,6 +51,10 @@ contextBridge.exposeInMainWorld('api', {
   // Settings
   saveSettings: (settings) => ipcRenderer.send('save-settings', settings),
 
+  // Auto-play (persistent auto-restart of a manual stream)
+  getAutoPlay: () => ipcRenderer.invoke('get-auto-play'),
+  setAutoPlay: (config) => ipcRenderer.send('set-auto-play', config),
+
   // Port conflict notifications
   onPortConflict: (callback) => {
     const handler = (_, data) => callback(data);

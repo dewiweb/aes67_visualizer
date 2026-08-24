@@ -86,7 +86,8 @@ function start(args) {
 
   // Stop existing stream, then start new one only after UDP socket is fully closed.
   // client.close() is async — binding immediately on the same port causes ghost packets.
-  stopThen(() => _startNow(args));
+  // Add a small delay after stop to ensure the OS releases the port.
+  stopThen(() => setTimeout(() => _startNow(args), 100));
 }
 
 function _startNow(args) {
@@ -281,10 +282,6 @@ function _startNow(args) {
 // Stop playback, then invoke cb() once the UDP socket is fully closed.
 // client.close() is async — callers must not rebind the same port until cb fires.
 function stopThen(cb) {
-  if (!streamOpen) {
-    if (cb) cb();
-    return;
-  }
   streamOpen = false;
 
   try {
@@ -300,12 +297,19 @@ function stopThen(cb) {
   client = null;
 
   if (oldClient) {
+    // Force-close: removeAllListeners + close + fallback timeout in case close callback never fires
     oldClient.removeAllListeners();
-    oldClient.close(() => {
+    let closed = false;
+    const done = () => {
+      if (closed) return;
+      closed = true;
       process.send({ type: 'status', playing: false });
       console.log('[Audio] Playback stopped');
       if (cb) cb();
-    });
+    };
+    try { oldClient.close(done); } catch (_) { done(); }
+    // Fallback: if close() doesn't call back within 500ms, proceed anyway
+    setTimeout(done, 500);
   } else {
     process.send({ type: 'status', playing: false });
     console.log('[Audio] Playback stopped');

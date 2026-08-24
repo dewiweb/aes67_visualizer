@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Download } from 'lucide-react';
+import { Plus, Download, X, Pencil } from 'lucide-react';
 import { ViewId } from '../App';
 import {
   Stream, StreamLevels, StreamPtpStatuses,
@@ -26,6 +26,7 @@ interface MainPanelProps {
   mdnsError: { code: string; message: string } | null;
   onAddManualStream: (sdp: string) => void;
   onRemoveStream: (streamId: string) => void;
+  onEditManualStream: (streamId: string, sdp: string) => void;
   onPlayStream: (stream: Stream, ch1: number, ch2: number) => void;
   onExportJson: () => void;
   onRemoveFromSlot: (slotId: string) => void;
@@ -45,20 +46,41 @@ const MainPanel: React.FC<MainPanelProps> = ({
   mdnsError,
   onAddManualStream,
   onRemoveStream,
+  onEditManualStream,
   onPlayStream,
   onExportJson,
   onRemoveFromSlot,
 }) => {
   const [sdpInput, setSdpInput] = useState('');
+  const [showSdpModal, setShowSdpModal] = useState(false);
+  const [editingStreamId, setEditingStreamId] = useState<string | null>(null);
 
   const sapStreams  = streams.filter(s => s.sourceType === 'sap');
   const manualStreams = streams.filter(s => s.sourceType === 'manual');
 
   const handleAddSdp = () => {
     if (sdpInput.trim()) {
-      onAddManualStream(sdpInput.trim());
+      if (editingStreamId) {
+        onEditManualStream(editingStreamId, sdpInput.trim());
+      } else {
+        onAddManualStream(sdpInput.trim());
+      }
       setSdpInput('');
+      setShowSdpModal(false);
+      setEditingStreamId(null);
     }
+  };
+
+  const handleEditStream = (stream: Stream) => {
+    setEditingStreamId(stream.id);
+    setSdpInput(stream.raw || '');
+    setShowSdpModal(true);
+  };
+
+  const handleCloseModal = () => {
+    setShowSdpModal(false);
+    setSdpInput('');
+    setEditingStreamId(null);
   };
 
   // ── Monitoring view: stream list (left panel) + wall (right) ────────────────
@@ -70,39 +92,70 @@ const MainPanel: React.FC<MainPanelProps> = ({
           <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700">
             <h2 className="text-sm font-semibold text-slate-200">
               {t.streams || 'Streams'}
-              {sapStreams.length > 0 && (
-                <span className="ml-2 text-xs font-normal text-slate-500">{sapStreams.length}</span>
+              {streams.length > 0 && (
+                <span className="ml-2 text-xs font-normal text-slate-500">{streams.length}</span>
               )}
             </h2>
-            <button
-              onClick={onExportJson}
-              disabled={streams.length === 0}
-              title="Export JSON"
-              className="p-1 text-slate-500 hover:text-slate-300 disabled:opacity-30 transition-colors"
-            >
-              <Download size={14} />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setShowSdpModal(true)}
+                title={t.addStream || 'Add Stream'}
+                className="p-1 text-slate-500 hover:text-green-400 transition-colors"
+              >
+                <Plus size={16} />
+              </button>
+              <button
+                onClick={onExportJson}
+                disabled={streams.length === 0}
+                title="Export JSON"
+                className="p-1 text-slate-500 hover:text-slate-300 disabled:opacity-30 transition-colors"
+              >
+                <Download size={14} />
+              </button>
+            </div>
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-2">
-            {sapStreams.length === 0 ? (
+            {sapStreams.length === 0 && manualStreams.length === 0 ? (
               <div className="text-center py-10 text-slate-500 text-sm">
                 <div className="text-3xl mb-2 opacity-40">📡</div>
                 <p>{t.noStreams || 'No streams detected'}</p>
                 <p className="text-xs mt-1 text-slate-600">{t.waitingForStreams || 'Waiting for SAP...'}</p>
               </div>
             ) : (
-              sapStreams.map(stream => (
-                <StreamCard
-                  key={stream.id}
-                  stream={stream}
-                  levels={streamLevels[stream.id]}
-                  ptpStatus={streamPtpStatuses[stream.id]}
-                  isPlaying={playingStreamId === stream.id}
-                  onPlay={(ch1, ch2) => onPlayStream(stream, ch1, ch2)}
-                  onRemove={() => onRemoveStream(stream.id)}
-                  draggable
-                />
-              ))
+              <>
+                {sapStreams.map(stream => (
+                  <StreamCard
+                    key={stream.id}
+                    stream={stream}
+                    levels={streamLevels[stream.id]}
+                    ptpStatus={streamPtpStatuses[stream.id]}
+                    isPlaying={playingStreamId === stream.id}
+                    onPlay={(ch1, ch2) => onPlayStream(stream, ch1, ch2)}
+                    onRemove={() => onRemoveStream(stream.id)}
+                    draggable
+                  />
+                ))}
+                {manualStreams.length > 0 && (
+                  <>
+                    <div className="pt-2 pb-1 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                      {t.manual || 'Manual'}
+                    </div>
+                    {manualStreams.map(stream => (
+                      <StreamCard
+                        key={stream.id}
+                        stream={stream}
+                        levels={streamLevels[stream.id]}
+                        ptpStatus={streamPtpStatuses[stream.id]}
+                        isPlaying={playingStreamId === stream.id}
+                        onPlay={(ch1, ch2) => onPlayStream(stream, ch1, ch2)}
+                        onRemove={() => onRemoveStream(stream.id)}
+                        onEdit={() => handleEditStream(stream)}
+                        draggable
+                      />
+                    ))}
+                  </>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -115,6 +168,66 @@ const MainPanel: React.FC<MainPanelProps> = ({
           streamPtpStatuses={streamPtpStatuses}
           onRemoveFromSlot={onRemoveFromSlot}
         />
+
+        {/* SDP modal */}
+        {showSdpModal && (
+          <div
+            className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+            onClick={handleCloseModal}
+          >
+            <div
+              className="bg-slate-800 rounded-xl border border-slate-700 w-full max-w-lg shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
+                <h2 className="text-sm font-semibold text-slate-200">
+                  {editingStreamId
+                    ? (t.editSdp || 'Edit SDP')
+                    : (t.pasteSdp || 'Paste SDP')}
+                </h2>
+                <button
+                  onClick={handleCloseModal}
+                  className="p-1 rounded hover:bg-slate-700 transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="p-4 space-y-3">
+                <p className="text-xs text-slate-500">
+                  {editingStreamId
+                    ? (t.editSdpDesc || 'Edit the SDP of this manual stream. The old stream will be replaced.')
+                    : (t.sdpModalDesc || 'Paste a raw SDP block to add a stream manually. Manual streams are saved between sessions and can be dragged to the monitoring wall.')}
+                </p>
+                <textarea
+                  value={sdpInput}
+                  onChange={(e) => setSdpInput(e.target.value)}
+                  placeholder={`v=0\r\no=- 1234567890 1234567890 IN IP4 192.168.1.1\r\ns=My Stream\r\nc=IN IP4 230.0.0.1\r\nm=audio 5004 RTP/AVP 96\r\n...`}
+                  className="w-full min-h-[200px] bg-slate-900 border border-slate-600 rounded-lg p-3 text-xs font-mono text-slate-300 resize-none focus:outline-none focus:border-blue-500"
+                  spellCheck={false}
+                  autoFocus
+                />
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={handleCloseModal}
+                    className="px-4 py-2 text-sm text-slate-400 hover:text-slate-200 transition-colors"
+                  >
+                    {t.cancel || 'Cancel'}
+                  </button>
+                  <button
+                    onClick={handleAddSdp}
+                    disabled={!sdpInput.trim()}
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors"
+                  >
+                    {editingStreamId ? <Pencil size={16} /> : <Plus size={16} />}
+                    {editingStreamId
+                      ? (t.save || 'Save')
+                      : (t.addStream || 'Add Stream')}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -155,71 +268,6 @@ const MainPanel: React.FC<MainPanelProps> = ({
         </div>
         <div className="flex-1 overflow-y-auto">
           <PtpPanel clocks={ptpClocks} allDevices={devices} />
-        </div>
-      </div>
-    );
-  }
-
-  // ── SDP view: manual SDP input + manual streams ───────────────────────────────
-  if (activeView === 'sdp') {
-    return (
-      <div className="flex-1 flex overflow-hidden bg-slate-900">
-        {/* Manual streams list */}
-        <div className="w-80 shrink-0 bg-slate-800 border-r border-slate-700 flex flex-col overflow-hidden">
-          <div className="px-3 py-2 border-b border-slate-700">
-            <h2 className="text-sm font-semibold text-slate-200">
-              {t.manualSdp || 'Manual SDP'}
-              {manualStreams.length > 0 && (
-                <span className="ml-2 text-xs font-normal text-slate-500">{manualStreams.length}</span>
-              )}
-            </h2>
-          </div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-2">
-            {manualStreams.length === 0 ? (
-              <p className="text-center py-8 text-slate-600 text-sm">No manual streams</p>
-            ) : (
-              manualStreams.map(stream => (
-                <StreamCard
-                  key={stream.id}
-                  stream={stream}
-                  levels={streamLevels[stream.id]}
-                  ptpStatus={streamPtpStatuses[stream.id]}
-                  isPlaying={playingStreamId === stream.id}
-                  onPlay={(ch1, ch2) => onPlayStream(stream, ch1, ch2)}
-                  onRemove={() => onRemoveStream(stream.id)}
-                  draggable
-                />
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* Right: SDP paste area */}
-        <div className="flex-1 flex flex-col p-6 gap-4 overflow-auto">
-          <div>
-            <h3 className="text-sm font-semibold text-slate-200 mb-1">{t.pasteSdp || 'Paste SDP'}</h3>
-            <p className="text-xs text-slate-500 mb-3">
-              Paste a raw SDP (Session Description Protocol) block to add a stream manually.
-              The stream will be announced on the network via SAP every 30s.
-            </p>
-          </div>
-
-          <textarea
-            value={sdpInput}
-            onChange={e => setSdpInput(e.target.value)}
-            placeholder={`v=0\r\no=- 1234567890 1234567890 IN IP4 192.168.1.1\r\ns=My Stream\r\n...`}
-            className="flex-1 min-h-[200px] bg-slate-800 border border-slate-600 rounded-lg p-3 text-xs font-mono text-slate-300 resize-none focus:outline-none focus:border-blue-500"
-            spellCheck={false}
-          />
-
-          <button
-            onClick={handleAddSdp}
-            disabled={!sdpInput.trim()}
-            className="flex items-center justify-center gap-2 py-2.5 px-4 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors self-start"
-          >
-            <Plus size={16} />
-            {t.addStream || 'Add Stream'}
-          </button>
         </div>
       </div>
     );

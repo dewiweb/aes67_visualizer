@@ -197,12 +197,21 @@ export interface AudioDevice {
   isDefaultOutput: boolean;
 }
 
+export interface AutoPlayConfig {
+  enabled: boolean;
+  sdp: string;
+  audioDeviceName: string;
+  ch1: number;
+  ch2: number;
+}
+
 export interface Settings {
   bufferSize: number;
   bufferEnabled: boolean;
   hideUnsupported: boolean;
   sdpDeleteTimeout: number;
   language: string;
+  autoPlay?: AutoPlayConfig;
 }
 
 export interface PersistentData {
@@ -238,6 +247,8 @@ export interface ElectronAPI {
   getAudioDevices: () => Promise<AudioDevice[]>;
   setAudioDevice: (device: AudioDevice) => void;
   saveSettings: (settings: Partial<Settings>) => void;
+  getAutoPlay: () => Promise<AutoPlayConfig | null>;
+  setAutoPlay: (config: AutoPlayConfig | null) => void;
   onPortConflict: (callback: (data: PortConflictData) => void) => () => void;
   onSdpError: (callback: (error: string) => void) => () => void;
   onSdpStatus: (callback: (data: { status: string; port: number }) => void) => () => void;

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useDraggable } from '@dnd-kit/core';
-import { Play, Square, Trash2, Radio, FileText, GripVertical } from 'lucide-react';
+import { Play, Square, Trash2, Radio, FileText, GripVertical, Pencil } from 'lucide-react';
 import { Stream, ChannelLevel, PtpStatus } from '../types';
 import LevelMeter from './LevelMeter';
 
@@ -13,6 +13,7 @@ interface StreamCardProps {
   draggable?: boolean;
   onPlay?: (ch1: number, ch2: number) => void;
   onRemove?: () => void;
+  onEdit?: () => void;
 }
 
 const PTP_LOCK_CONFIG = {
@@ -51,6 +52,7 @@ const StreamCard: React.FC<StreamCardProps> = ({
   draggable = false,
   onPlay,
   onRemove,
+  onEdit,
 }) => {
   const [selectedChannels, setSelectedChannels] = useState<[number, number]>([0, 1]);
 
@@ -169,6 +171,11 @@ const StreamCard: React.FC<StreamCardProps> = ({
               AES67
             </span>
           )}
+          {stream.sourceType === 'manual' && (
+            <span className="bg-green-900/50 px-1.5 py-0.5 rounded text-green-300" title="Manually added stream">
+              Manual
+            </span>
+          )}
           {!stream.streamFamily && stream.dante && (
             <span className="bg-purple-900/50 px-1.5 py-0.5 rounded text-purple-300">
               Dante
@@ -220,9 +227,9 @@ const StreamCard: React.FC<StreamCardProps> = ({
         )}
 
         {/* Controls */}
-        {stream.isSupported && (onPlay || onRemove) && (
+        {(stream.isSupported && (onPlay || onRemove)) || (stream.manual && (onEdit || onRemove)) ? (
           <div className="flex items-center gap-2 pt-1">
-            {onPlay && stream.channels > 2 && (
+            {onPlay && stream.isSupported && stream.channels > 2 && (
               <select
                 value={`${selectedChannels[0]},${selectedChannels[1]}`}
                 onChange={(e) => {
@@ -239,7 +246,7 @@ const StreamCard: React.FC<StreamCardProps> = ({
               </select>
             )}
 
-            {onPlay && (
+            {onPlay && stream.isSupported && (
               <button
                 onClick={handlePlay}
                 className={`p-1.5 rounded transition-colors ${
@@ -253,6 +260,16 @@ const StreamCard: React.FC<StreamCardProps> = ({
               </button>
             )}
 
+            {stream.manual && onEdit && (
+              <button
+                onClick={onEdit}
+                className="p-1.5 rounded bg-slate-700 hover:bg-blue-600 transition-colors ml-auto"
+                title="Edit SDP"
+              >
+                <Pencil size={14} />
+              </button>
+            )}
+
             {onRemove && stream.manual && (
               <button
                 onClick={onRemove}
@@ -263,7 +280,7 @@ const StreamCard: React.FC<StreamCardProps> = ({
               </button>
             )}
           </div>
-        )}
+        ) : null}
 
         {/* Unsupported reason */}
         {!stream.isSupported && stream.unsupportedReason && (

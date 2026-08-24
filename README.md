@@ -5,6 +5,8 @@ A cross-platform AES67 / ST2110-30 / RAVENNA / Dante audio stream visualization 
 ## Features
 
 - **SAP/mDNS Discovery**: Automatic detection of AES67, RAVENNA and Dante streams
+- **Manual SDP Streams**: Add streams by pasting SDP directly (no SAP required)
+- **Auto-play**: Automatically resume playback on startup with saved SDP + channel mapping
 - **Dante ARC**: Query Dante devices directly (name, model, TX/RX channels, channel names)
 - **Device Panel**: Per-device view with expandable TX/RX channel list
 - **Monitoring Wall**: Drag-and-drop streams to 16-slot monitoring wall
@@ -16,11 +18,11 @@ A cross-platform AES67 / ST2110-30 / RAVENNA / Dante audio stream visualization 
 
 ## Tech Stack
 
-- **Frontend**: React 18 + TypeScript + Vite + TailwindCSS
-- **Desktop**: Electron 33
+- **Frontend**: React 19 + TypeScript 7 + Vite 8 + TailwindCSS 4
+- **Desktop**: Electron 43
 - **Audio**: Audify (RtAudio bindings)
-- **SDP Parsing**: sdp-transform
-- **Drag & Drop**: @dnd-kit/core
+- **SDP Parsing**: sdp-transform 3
+- **Drag & Drop**: @dnd-kit/core + @dnd-kit/sortable
 
 ## Installation
 
@@ -29,14 +31,16 @@ git clone https://github.com/dewiweb/aes67_visualizer.git
 cd aes67_visualizer
 npm install
 npm run dev:app       # development
-npm run build:electron  # production
+npm run build:win     # Windows build (NSIS installer + portable exe)
+npm run build:linux   # Linux build (AppImage)
+npm run build:mac     # macOS build (DMG)
 ```
 
 ## Architecture
 
 ```
 electron/
-├── main.js                  # Electron main process / IPC orchestration
+├── main.cjs                  # Electron main process / IPC orchestration
 ├── preload.cjs              # Context bridge API
 ├── processes/
 │   ├── discovery.cjs        # mDNS + ARC + RTSP discovery (child process)

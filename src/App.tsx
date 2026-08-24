@@ -19,6 +19,7 @@ import {
   NetworkInterface,
   Settings,
   AudioDevice,
+  AutoPlayConfig,
   TOTAL_SLOTS,
   AudioStatus,
   PortConflictData,
@@ -29,7 +30,7 @@ import MainPanel from './components/MainPanel';
 import StreamCard from './components/StreamCard';
 import SettingsPanel from './components/SettingsPanel';
 
-export type ViewId = 'monitoring' | 'devices' | 'ptp' | 'sdp' | 'routing' | 'permissions';
+export type ViewId = 'monitoring' | 'devices' | 'ptp' | 'routing' | 'permissions';
 
 const App: React.FC = () => {
   // Language
@@ -65,6 +66,7 @@ const App: React.FC = () => {
 
   // Audio playback
   const [playingStreamId, setPlayingStreamId] = useState<string | null>(null);
+  const playingStreamIdRef = React.useRef<string | null>(null);
 
   // Audio devices
   const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
@@ -77,6 +79,14 @@ const App: React.FC = () => {
   const [portConflicts, setPortConflicts] = useState<PortConflictData[]>([]);
   const [mdnsError, setMdnsError] = useState<{ code: string; message: string } | null>(null);
   const [activeView, setActiveView] = useState<ViewId>('monitoring');
+
+  // Auto-play state
+  const [autoPlayConfig, setAutoPlayConfig] = useState<AutoPlayConfig | null>(null);
+  const autoPlayConfigRef = React.useRef<AutoPlayConfig | null>(null);
+  const autoPlayStreamIdRef = React.useRef<string | null>(null);
+  const manualStopRef = React.useRef<boolean>(false);
+  const streamsRef = React.useRef<Stream[]>([]);
+  const settingsRef = React.useRef(settings);
 
   // DnD sensors
   const sensors = useSensors(
@@ -106,9 +116,46 @@ const App: React.FC = () => {
       }
     });
 
+    // Load auto-play config
+    window.api.getAutoPlay().then((config) => {
+      if (config && config.enabled && config.sdp) {
+        setAutoPlayConfig(config);
+        autoPlayConfigRef.current = config;
+        // Add the manual stream immediately — playback starts when the stream appears
+        window.api.addManualStream(config.sdp);
+        console.log('[AutoPlay] Config loaded, manual stream added');
+      }
+    });
+
     // Subscribe to streams updates
     const unsubStreams = window.api.onStreamsUpdate((newStreams) => {
       setStreams(newStreams);
+
+      // Auto-play: start playback the first time the manual stream appears
+      const cfg = autoPlayConfigRef.current;
+      if (cfg && cfg.enabled && !autoPlayStreamIdRef.current && !manualStopRef.current) {
+        const manualStream = newStreams.find(
+          (s) => s.sourceType === 'manual' && s.isSupported
+        );
+        if (manualStream) {
+          autoPlayStreamIdRef.current = manualStream.id;
+          console.log(`[AutoPlay] Starting playback: ${manualStream.name} (${manualStream.mcast}:${manualStream.port})`);
+          window.api.playStream({
+            streamId: manualStream.id,
+            streamName: manualStream.name,
+            mcast: manualStream.mcast,
+            port: manualStream.port,
+            codec: manualStream.codec,
+            ptime: manualStream.ptime,
+            sampleRate: manualStream.sampleRate,
+            channels: manualStream.channels,
+            ch1Map: cfg.ch1,
+            ch2Map: cfg.ch2,
+            bufferEnabled: settingsRef.current.bufferEnabled,
+            bufferSize: settingsRef.current.bufferSize,
+          });
+        }
+      }
     });
 
     // Subscribe to audio levels
@@ -118,7 +165,40 @@ const App: React.FC = () => {
 
     // Subscribe to audio status
     const unsubAudioStatus = window.api.onAudioStatus((status: AudioStatus) => {
-      setPlayingStreamId(status.playing ? status.streamId || null : null);
+      const id = status.playing ? status.streamId || null : null;
+      playingStreamIdRef.current = id;
+      setPlayingStreamId(id);
+
+      // Auto-play: reconnect if playback stopped unexpectedly (not a manual stop)
+      // Only reconnect if we were actually playing before (playingStreamIdRef was set)
+      const cfg = autoPlayConfigRef.current;
+      if (!status.playing && cfg && cfg.enabled && autoPlayStreamIdRef.current && !manualStopRef.current && playingStreamIdRef.current) {
+        console.log('[AutoPlay] Playback stopped unexpectedly, reconnecting in 2s...');
+        playingStreamIdRef.current = null;
+        setTimeout(() => {
+          if (manualStopRef.current) return; // user stopped during the delay
+          const s = streamsRef.current.find(
+            (s) => s.id === autoPlayStreamIdRef.current && s.isSupported
+          );
+          if (s) {
+            console.log(`[AutoPlay] Reconnecting: ${s.name}`);
+            window.api.playStream({
+              streamId: s.id,
+              streamName: s.name,
+              mcast: s.mcast,
+              port: s.port,
+              codec: s.codec,
+              ptime: s.ptime,
+              sampleRate: s.sampleRate,
+              channels: s.channels,
+              ch1Map: cfg.ch1,
+              ch2Map: cfg.ch2,
+              bufferEnabled: settingsRef.current.bufferEnabled,
+              bufferSize: settingsRef.current.bufferSize,
+            });
+          }
+        }, 2000);
+      }
     });
 
     // Subscribe to interface changes
@@ -200,6 +280,12 @@ const App: React.FC = () => {
     });
   }, [streams]);
 
+  // Keep refs in sync for use in IPC callbacks
+  useEffect(() => {
+    streamsRef.current = streams;
+    settingsRef.current = settings;
+  });
+
   // Start monitoring when slots change (stream added/removed from wall).
   // Does NOT depend on 'streams' — uses slot.stream directly to avoid
   // triggering on every SAP refresh.
@@ -242,6 +328,27 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // Handle auto-play config change
+  const handleAutoPlayChange = useCallback((config: AutoPlayConfig | null) => {
+    setAutoPlayConfig(config);
+    autoPlayConfigRef.current = config;
+    if (window.api) {
+      window.api.setAutoPlay(config);
+    }
+    if (config && config.enabled) {
+      // If enabling, add the manual stream now
+      if (window.api && config.sdp) {
+        window.api.addManualStream(config.sdp);
+      }
+    } else {
+      // If disabling, stop playback
+      if (window.api) {
+        window.api.stopPlayback();
+      }
+      autoPlayStreamIdRef.current = null;
+    }
+  }, []);
+
   // Fetch audio devices when settings panel opens
   const handleOpenSettings = useCallback(async () => {
     if (window.api) {
@@ -256,6 +363,22 @@ const App: React.FC = () => {
     if (window.api) {
       window.api.addManualStream(sdp);
     }
+  }, []);
+
+  // Handle manual SDP edit (remove old + add new)
+  const handleEditManualStream = useCallback((streamId: string, sdp: string) => {
+    if (window.api) {
+      window.api.removeStream(streamId);
+      window.api.addManualStream(sdp);
+    }
+    // Also remove from slots if it was in the monitoring wall
+    setSlots((prev) =>
+      prev.map((slot) =>
+        slot.streamId === streamId
+          ? { ...slot, streamId: null, stream: null }
+          : slot
+      )
+    );
   }, []);
 
   // Export streams as JSON
@@ -312,8 +435,11 @@ const App: React.FC = () => {
 
       if (playingStreamId === stream.id) {
         window.api.stopPlayback();
+        manualStopRef.current = true;
+        playingStreamIdRef.current = null;
         setPlayingStreamId(null);
       } else {
+        manualStopRef.current = false;
         window.api.playStream({
           streamId: stream.id,
           streamName: stream.name,
@@ -437,13 +563,12 @@ const App: React.FC = () => {
           <NavRail
             activeView={activeView}
             onViewChange={setActiveView}
-            streamCount={filteredStreams.filter(s => s.sourceType === 'sap').length}
+            streamCount={filteredStreams.length}
             deviceCount={new Set([
               ...devices.map(d => d.ip).filter(Boolean),
               ...streams.map(s => s.deviceIp || s.sapSourceIp).filter(Boolean) as string[],
             ]).size}
             ptpCount={ptpClocks.length}
-            manualCount={filteredStreams.filter(s => s.sourceType === 'manual').length}
             conflictCount={portConflicts.length}
           />
           <MainPanel
@@ -459,6 +584,7 @@ const App: React.FC = () => {
             portConflicts={portConflicts}
             mdnsError={mdnsError}
             onAddManualStream={handleAddManualStream}
+            onEditManualStream={handleEditManualStream}
             onRemoveStream={handleRemoveStream}
             onPlayStream={handlePlayStream}
             onExportJson={handleExportJson}
@@ -489,8 +615,10 @@ const App: React.FC = () => {
             languageNames={languageNames}
             audioDevices={audioDevices}
             currentAudioDevice={currentAudioDevice}
+            autoPlayConfig={autoPlayConfig}
             onSettingsChange={handleSettingsChange}
             onAudioDeviceChange={handleAudioDeviceChange}
+            onAutoPlayChange={handleAutoPlayChange}
             onClose={() => setShowSettings(false)}
           />
         )}
